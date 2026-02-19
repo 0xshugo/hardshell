@@ -1,0 +1,24 @@
+# hardshell configuration
+# Copy to hardshell.toml, ~/.config/hardshell/config.toml, or /etc/hardshell/config.toml
+
+[scan]
+# Scanners to run by default (system is always available)
+scanners = ["system", "trivy", "grype"]
+
+# Enrich findings with CTI data (EPSS, CISA KEV)
+enrich = true
+
+# Run LLM analysis (requires 'claude' CLI in PATH)
+analyze = false
+
+# Default output format: terminal, json, markdown
+format = "terminal"
+
+# Trivy scan target (rootfs path or container image)
+trivy_target = "/"
+
+# Nuclei scan targets (URLs)
+nuclei_targets = []
+
+# Docker socket path
+docker_socket = "/var/run/docker.sock"
