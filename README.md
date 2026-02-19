@@ -8,6 +8,9 @@ hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with 
 
 - **Built-in system scanner** — OS packages, SSH config, firewall, fail2ban, Docker audit (no external tools required)
 - **External scanner wrappers** — Trivy, Grype, Lynis, Nuclei (auto-detected, graceful skip if missing)
+- **Safer scanner execution** — Argument-based subprocess execution to reduce command injection risk from scan targets
+- **Input hardening for web scans** — Nuclei targets are validated (`http/https`) before execution
+- **Resilient AI analysis** — LLM (`claude -p`) analysis has a timeout to avoid long hangs on low-resource VPS
 - **CTI enrichment** — EPSS exploit probability + CISA KEV known exploited vulnerabilities
 - **Risk scoring** — Severity × exploit factor, prioritized output
 - **LLM analysis** — Optional `claude -p` integration for contextual remediation advice
@@ -71,6 +74,17 @@ enrich = true
 analyze = false
 format = "terminal"
 ```
+
+
+## Operational Safety & Compatibility
+
+Recent hardening changes improve reliability for personal VPS environments with limited resources:
+
+- Scanner command execution avoids shell interpolation, reducing risk when handling user-provided targets.
+- Nuclei runs only with valid `http/https` targets, preventing accidental malformed target execution.
+- Optional LLM analysis now times out automatically, so scans do not block indefinitely.
+
+These changes make rollout easier across a wider range of small VPS setups, including hosts with stricter runtime constraints or minimal operational buffers.
 
 ## Docker
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from pathlib import Path
 
 from hardshell.config import ScanConfig
 from hardshell.models import Finding, Severity
@@ -27,11 +28,10 @@ class GrypeScanner:
         return shutil.which("grype") is not None
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
-        target = config.trivy_target  # Reuse same target path
-        cmd = f"grype dir:{target} -o json --quiet"
+        args = self._build_cmd(config.trivy_target)
 
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -41,6 +41,13 @@ class GrypeScanner:
             return []
 
         return self._parse(stdout.decode(errors="replace"))
+
+    def _build_cmd(self, target: str) -> list[str]:
+        normalized = target
+        if Path(target).exists() and not target.startswith("dir:"):
+            normalized = f"dir:{target}"
+
+        return ["grype", normalized, "-o", "json", "--quiet"]
 
     def _parse(self, raw: str) -> list[Finding]:
         findings: list[Finding] = []

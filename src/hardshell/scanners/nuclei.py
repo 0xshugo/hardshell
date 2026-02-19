@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from urllib.parse import urlparse
 
 from hardshell.config import ScanConfig
 from hardshell.models import Finding, Severity
@@ -30,17 +31,37 @@ class NucleiScanner:
         if not config.nuclei_targets:
             return []
 
-        targets = " ".join(f"-u {t}" for t in config.nuclei_targets)
-        cmd = f"nuclei {targets} -jsonl -silent -severity medium,high,critical"
+        args = self._build_cmd(config.nuclei_targets)
+        if "-u" not in args:
+            return []
 
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
 
         return self._parse(stdout.decode(errors="replace"))
+
+    def _build_cmd(self, targets: list[str]) -> list[str]:
+        args = [
+            "nuclei",
+            "-jsonl",
+            "-silent",
+            "-severity",
+            "medium,high,critical",
+            "-timeout",
+            "10",
+        ]
+
+        for target in targets:
+            parsed = urlparse(target)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                continue
+            args.extend(["-u", target])
+
+        return args
 
     def _parse(self, raw: str) -> list[Finding]:
         findings: list[Finding] = []
