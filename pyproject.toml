@@ -9,7 +9,7 @@ description = "VPS security hardening tool — scan, enrich with CTI, prioritize
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-authors = [{ name = "shugo", email = "shugo.nozaki@gmail.com" }]
+authors = [{ name = "shugo", email = "shugo@nozaki.com" }]
 keywords = ["security", "hardening", "vps", "vulnerability", "scanner"]
 classifiers = [
     "Development Status :: 3 - Alpha",
