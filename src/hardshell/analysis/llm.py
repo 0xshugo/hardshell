@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 
 from hardshell.models import ScanResult
@@ -47,10 +48,14 @@ async def analyze(result: ScanResult) -> str | None:
         f"Be concise and actionable. Output in Markdown."
     )
 
+    # Unset CLAUDECODE to allow nested invocation
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p", prompt,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     stdout, stderr = await proc.communicate()
 
