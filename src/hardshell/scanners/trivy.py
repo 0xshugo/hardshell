@@ -27,9 +27,14 @@ class TrivyScanner:
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         target = config.trivy_target
-        cmd = f"trivy rootfs --format json --quiet {target}"
+        base = "trivy rootfs"
         if target.startswith("/") and target != "/":
-            cmd = f"trivy fs --format json --quiet {target}"
+            base = "trivy fs"
+
+        cmd = (
+            f"{base} --format json --quiet "
+            f"--scanners vuln --timeout 10m {target}"
+        )
 
         proc = await asyncio.create_subprocess_shell(
             cmd,
