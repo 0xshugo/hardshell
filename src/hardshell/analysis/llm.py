@@ -52,12 +52,20 @@ async def analyze(result: ScanResult) -> str | None:
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     proc = await asyncio.create_subprocess_exec(
-        "claude", "-p", prompt,
+        "claude",
+        "-p",
+        prompt,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    stdout, stderr = await proc.communicate()
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    except TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return "# LLM analysis timed out\nThe `claude` command exceeded 120 seconds."
 
     if proc.returncode != 0:
         return f"# LLM analysis failed\n```\n{stderr.decode(errors='replace')[:500]}\n```"

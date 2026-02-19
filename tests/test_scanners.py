@@ -117,3 +117,33 @@ def test_nuclei_parse():
     assert len(findings) == 1
     assert findings[0].id == "CVE-2024-1234"
     assert findings[0].severity == Severity.HIGH
+
+
+def test_trivy_build_cmd_uses_argument_list():
+    scanner = TrivyScanner()
+    target = '/tmp/path with spaces'
+
+    args = scanner._build_cmd(target)
+
+    assert args[0] == 'trivy'
+    assert '--format' in args
+    assert args[-1] == target
+
+
+def test_grype_build_cmd_prefixes_existing_path():
+    scanner = GrypeScanner()
+    args = scanner._build_cmd('/')
+
+    assert args[0] == 'grype'
+    assert args[1].startswith('dir:')
+
+
+def test_nuclei_build_cmd_filters_invalid_targets():
+    scanner = NucleiScanner()
+
+    args = scanner._build_cmd(['https://example.com', 'file:///etc/passwd', 'not-a-url'])
+
+    assert args[:2] == ['nuclei', '-jsonl']
+    assert '-u' in args
+    assert 'https://example.com' in args
+    assert 'file:///etc/passwd' not in args
