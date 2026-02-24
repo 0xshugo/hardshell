@@ -41,36 +41,40 @@ class LynisScanner:
 
             # Parse warnings: warning[]=<id>|<text>|<details>|<severity>
             if line.startswith("warning[]="):
-                parts = line[len("warning[]="):].split("|")
+                parts = line[len("warning[]=") :].split("|")
                 if len(parts) >= 2:
                     test_id = parts[0]
                     text = parts[1]
                     details = parts[2] if len(parts) > 2 else ""
-                    findings.append(Finding(
-                        id=f"LYNIS-{test_id}",
-                        scanner=self.name,
-                        severity=Severity.HIGH,
-                        title=text,
-                        description=details,
-                        affected=test_id,
-                    ))
+                    findings.append(
+                        Finding(
+                            id=f"LYNIS-{test_id}",
+                            scanner=self.name,
+                            severity=Severity.HIGH,
+                            title=text,
+                            description=details,
+                            affected=test_id,
+                        )
+                    )
 
             # Parse suggestions: suggestion[]=<id>|<text>|<details>|<severity>
             elif line.startswith("suggestion[]="):
-                parts = line[len("suggestion[]="):].split("|")
+                parts = line[len("suggestion[]=") :].split("|")
                 if len(parts) >= 2:
                     test_id = parts[0]
                     text = parts[1]
                     details = parts[2] if len(parts) > 2 else ""
-                    findings.append(Finding(
-                        id=f"LYNIS-{test_id}",
-                        scanner=self.name,
-                        severity=Severity.MEDIUM,
-                        title=text,
-                        description=details,
-                        affected=test_id,
-                        remediation=details if details else None,
-                    ))
+                    findings.append(
+                        Finding(
+                            id=f"LYNIS-{test_id}",
+                            scanner=self.name,
+                            severity=Severity.MEDIUM,
+                            title=text,
+                            description=details,
+                            affected=test_id,
+                            remediation=details if details else None,
+                        )
+                    )
 
         # Parse hardening index
         match = re.search(r"hardening_index=(\d+)", report)
@@ -82,12 +86,14 @@ class LynisScanner:
             elif index < 70:
                 severity = Severity.MEDIUM
 
-            findings.append(Finding(
-                id="LYNIS-HARDENING-INDEX",
-                scanner=self.name,
-                severity=severity,
-                title=f"Lynis hardening index: {index}/100",
-                affected="system",
-            ))
+            findings.append(
+                Finding(
+                    id="LYNIS-HARDENING-INDEX",
+                    scanner=self.name,
+                    severity=severity,
+                    title=f"Lynis hardening index: {index}/100",
+                    affected="system",
+                )
+            )
 
         return findings

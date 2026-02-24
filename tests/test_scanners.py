@@ -16,30 +16,34 @@ def test_system_scanner_always_available():
 
 def test_trivy_parse():
     scanner = TrivyScanner()
-    raw = json.dumps({
-        "Results": [{
-            "Target": "ubuntu (ubuntu 22.04)",
-            "Vulnerabilities": [
+    raw = json.dumps(
+        {
+            "Results": [
                 {
-                    "VulnerabilityID": "CVE-2024-1234",
-                    "PkgName": "openssl",
-                    "InstalledVersion": "3.0.2-0ubuntu1.12",
-                    "FixedVersion": "3.0.2-0ubuntu1.15",
-                    "Severity": "HIGH",
-                    "Title": "OpenSSL: Buffer overflow",
-                    "Description": "A buffer overflow in OpenSSL...",
-                },
-                {
-                    "VulnerabilityID": "CVE-2024-5678",
-                    "PkgName": "curl",
-                    "InstalledVersion": "7.81.0",
-                    "Severity": "CRITICAL",
-                    "Title": "curl: Use-after-free",
-                    "Description": "A use-after-free in curl...",
-                },
-            ],
-        }]
-    })
+                    "Target": "ubuntu (ubuntu 22.04)",
+                    "Vulnerabilities": [
+                        {
+                            "VulnerabilityID": "CVE-2024-1234",
+                            "PkgName": "openssl",
+                            "InstalledVersion": "3.0.2-0ubuntu1.12",
+                            "FixedVersion": "3.0.2-0ubuntu1.15",
+                            "Severity": "HIGH",
+                            "Title": "OpenSSL: Buffer overflow",
+                            "Description": "A buffer overflow in OpenSSL...",
+                        },
+                        {
+                            "VulnerabilityID": "CVE-2024-5678",
+                            "PkgName": "curl",
+                            "InstalledVersion": "7.81.0",
+                            "Severity": "CRITICAL",
+                            "Title": "curl: Use-after-free",
+                            "Description": "A use-after-free in curl...",
+                        },
+                    ],
+                }
+            ]
+        }
+    )
 
     findings = scanner._parse(raw)
     assert len(findings) == 2
@@ -57,20 +61,24 @@ def test_trivy_parse_empty():
 
 def test_grype_parse():
     scanner = GrypeScanner()
-    raw = json.dumps({
-        "matches": [{
-            "vulnerability": {
-                "id": "CVE-2024-9999",
-                "severity": "Medium",
-                "description": "Test vulnerability in libfoo",
-                "fix": {"versions": ["1.2.3"]},
-            },
-            "artifact": {
-                "name": "libfoo",
-                "version": "1.0.0",
-            },
-        }]
-    })
+    raw = json.dumps(
+        {
+            "matches": [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2024-9999",
+                        "severity": "Medium",
+                        "description": "Test vulnerability in libfoo",
+                        "fix": {"versions": ["1.2.3"]},
+                    },
+                    "artifact": {
+                        "name": "libfoo",
+                        "version": "1.0.0",
+                    },
+                }
+            ]
+        }
+    )
 
     findings = scanner._parse(raw)
     assert len(findings) == 1
@@ -101,17 +109,19 @@ def test_lynis_parse():
 
 def test_nuclei_parse():
     scanner = NucleiScanner()
-    raw = json.dumps({
-        "template-id": "cve-2024-1234",
-        "info": {
-            "name": "Test Template",
-            "severity": "high",
-            "description": "Test nuclei finding",
-            "reference": ["CVE-2024-1234", "https://example.com"],
-        },
-        "matched-at": "https://target.com/path",
-        "host": "target.com",
-    })
+    raw = json.dumps(
+        {
+            "template-id": "cve-2024-1234",
+            "info": {
+                "name": "Test Template",
+                "severity": "high",
+                "description": "Test nuclei finding",
+                "reference": ["CVE-2024-1234", "https://example.com"],
+            },
+            "matched-at": "https://target.com/path",
+            "host": "target.com",
+        }
+    )
 
     findings = scanner._parse(raw)
     assert len(findings) == 1

@@ -63,15 +63,17 @@ class GrypeScanner:
             sev = SEVERITY_MAP.get(vuln.get("severity", "Unknown"), Severity.INFO)
 
             fixed_versions = vuln.get("fix", {}).get("versions", [])
-            findings.append(Finding(
-                id=cve_id,
-                scanner=self.name,
-                severity=sev,
-                title=vuln.get("description", cve_id)[:200],
-                description=vuln.get("description", "")[:500],
-                affected=artifact.get("name", ""),
-                current_version=artifact.get("version"),
-                fixed_version=", ".join(fixed_versions) if fixed_versions else None,
-            ))
+            findings.append(
+                Finding(
+                    id=cve_id,
+                    scanner=self.name,
+                    severity=sev,
+                    title=vuln.get("description", cve_id)[:200],
+                    description=vuln.get("description", "")[:500],
+                    affected=artifact.get("name", ""),
+                    current_version=artifact.get("version"),
+                    fixed_version=", ".join(fixed_versions) if fixed_versions else None,
+                )
+            )
 
         return findings

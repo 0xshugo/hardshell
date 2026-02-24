@@ -31,11 +31,13 @@ def render_terminal(result: ScanResult, console: Console) -> None:
         f"[dim]Info: {s.info}[/]  "
         f"| Total: {s.total}"
     )
-    console.print(Panel(
-        summary_text,
-        title=f"[bold]Scan Summary — {result.hostname}[/]",
-        subtitle=f"{result.os_info} | {result.timestamp:%Y-%m-%d %H:%M UTC}",
-    ))
+    console.print(
+        Panel(
+            summary_text,
+            title=f"[bold]Scan Summary — {result.hostname}[/]",
+            subtitle=f"{result.os_info} | {result.timestamp:%Y-%m-%d %H:%M UTC}",
+        )
+    )
 
     # Findings table
     if not result.findings:
@@ -68,8 +70,10 @@ def render_terminal(result: ScanResult, console: Console) -> None:
 
     # LLM analysis
     if result.llm_analysis:
-        console.print(Panel(
-            result.llm_analysis,
-            title="[bold]LLM Analysis[/]",
-            border_style="blue",
-        ))
+        console.print(
+            Panel(
+                result.llm_analysis,
+                title="[bold]LLM Analysis[/]",
+                border_style="blue",
+            )
+        )

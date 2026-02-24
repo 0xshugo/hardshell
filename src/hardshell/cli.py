@@ -49,12 +49,8 @@ def scan(
     enrich: Annotated[bool, typer.Option("--enrich", "-e", help="Enrich with CTI data")] = False,
     analyze: Annotated[bool, typer.Option("--analyze", "-a", help="Run LLM analysis")] = False,
     format: Annotated[str, typer.Option("--format", "-f", help="Output format")] = "terminal",
-    output: Annotated[
-        str | None, typer.Option("--output", "-o", help="Output file path")
-    ] = None,
-    config: Annotated[
-        Path | None, typer.Option("--config", "-c", help="Config file path")
-    ] = None,
+    output: Annotated[str | None, typer.Option("--output", "-o", help="Output file path")] = None,
+    config: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
 ) -> None:
     """Run security scan on this host."""
     cfg = load_config(config)
@@ -172,9 +168,7 @@ def status() -> None:
 
 @app.command(name="config")
 def config_show(
-    config: Annotated[
-        Path | None, typer.Option("--config", "-c", help="Config file path")
-    ] = None,
+    config: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
 ) -> None:
     """Show current configuration."""
     cfg = load_config(config)

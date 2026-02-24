@@ -76,23 +76,23 @@ class NucleiScanner:
 
             info = data.get("info", {})
             template_id = data.get("template-id", "unknown")
-            sev = SEVERITY_MAP.get(
-                info.get("severity", "unknown"), Severity.INFO
-            )
+            sev = SEVERITY_MAP.get(info.get("severity", "unknown"), Severity.INFO)
 
             # Extract CVE references if available
             refs = info.get("reference", [])
             cve_ids = [r for r in (refs or []) if r.startswith("CVE-")]
             finding_id = cve_ids[0] if cve_ids else f"NUCLEI-{template_id}"
 
-            findings.append(Finding(
-                id=finding_id,
-                scanner=self.name,
-                severity=sev,
-                title=info.get("name", template_id),
-                description=info.get("description", "")[:500],
-                affected=data.get("matched-at", data.get("host", "")),
-                remediation=info.get("remediation"),
-            ))
+            findings.append(
+                Finding(
+                    id=finding_id,
+                    scanner=self.name,
+                    severity=sev,
+                    title=info.get("name", template_id),
+                    description=info.get("description", "")[:500],
+                    affected=data.get("matched-at", data.get("host", "")),
+                    remediation=info.get("remediation"),
+                )
+            )
 
         return findings

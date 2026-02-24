@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-from pathlib import Path
 
 from hardshell.config import ScanConfig
 from hardshell.models import Finding, Severity
@@ -27,9 +26,15 @@ class TrivyScanner:
         return shutil.which("trivy") is not None
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
-        args = self._build_cmd(config.trivy_target)
-        proc = await asyncio.create_subprocess_exec(
-            *args,
+        target = config.trivy_target
+        base = "trivy rootfs"
+        if target.startswith("/") and target != "/":
+            base = "trivy fs"
+
+        cmd = f"{base} --format json --quiet --scanners vuln --timeout 10m {target}"
+
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -39,24 +44,6 @@ class TrivyScanner:
             return []
 
         return self._parse(stdout.decode(errors="replace"))
-
-    def _build_cmd(self, target: str) -> list[str]:
-        scan_type = "rootfs"
-        if target.startswith("/") and target != "/" and Path(target).exists():
-            scan_type = "fs"
-
-        return [
-            "trivy",
-            scan_type,
-            "--format",
-            "json",
-            "--quiet",
-            "--scanners",
-            "vuln",
-            "--timeout",
-            "10m",
-            target,
-        ]
 
     def _parse(self, raw: str) -> list[Finding]:
         findings: list[Finding] = []
@@ -71,15 +58,17 @@ class TrivyScanner:
             for vuln in result.get("Vulnerabilities", []):
                 cve_id = vuln.get("VulnerabilityID", "UNKNOWN")
                 sev = SEVERITY_MAP.get(vuln.get("Severity", "UNKNOWN"), Severity.INFO)
-                findings.append(Finding(
-                    id=cve_id,
-                    scanner=self.name,
-                    severity=sev,
-                    title=vuln.get("Title", cve_id),
-                    description=vuln.get("Description", "")[:500],
-                    affected=f"{vuln.get('PkgName', target)}",
-                    current_version=vuln.get("InstalledVersion"),
-                    fixed_version=vuln.get("FixedVersion"),
-                ))
+                findings.append(
+                    Finding(
+                        id=cve_id,
+                        scanner=self.name,
+                        severity=sev,
+                        title=vuln.get("Title", cve_id),
+                        description=vuln.get("Description", "")[:500],
+                        affected=f"{vuln.get('PkgName', target)}",
+                        current_version=vuln.get("InstalledVersion"),
+                        fixed_version=vuln.get("FixedVersion"),
+                    )
+                )
 
         return findings
