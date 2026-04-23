@@ -12,6 +12,7 @@ from hardshell.scanners.agent_registry import (
 from hardshell.scanners.grype import GrypeScanner
 from hardshell.scanners.lynis import LynisScanner
 from hardshell.scanners.nuclei import NucleiScanner
+from hardshell.scanners.ssl import SslScanner
 from hardshell.scanners.system import SystemScanner
 from hardshell.scanners.trivy import TrivyScanner
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 SCANNER_CLASSES: dict[str, type] = {
     "system": SystemScanner,
+    "ssl": SslScanner,
     "agent-registry": AgentRegistryScanner,
     "tool-mcp": ToolMCPScanner,
     "secret-config": SecretConfigScanner,

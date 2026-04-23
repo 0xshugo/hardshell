@@ -12,18 +12,25 @@ BIN_DIR="$HARDSHELL_HOME/bin"
 DATE=$(date +%Y-%m-%d)
 HARDSHELL="/usr/local/bin/hardshell"
 
+# 環境変数読み込み (cron 実行時は .env から DISCORD_WEBHOOK_URL を補完)
+ENV_FILE="/home/shugo/.env"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
+
 mkdir -p "$REPORT_DIR"
 
 case "$MODE" in
   daily)
-    SCANNERS="system,trivy"
+    SCANNERS="system,ssl,trivy"
     OUTFILE="$REPORT_DIR/daily-${DATE}.json"
     echo "[$(date)] Starting daily scan..."
     sudo --preserve-env=PATH "$HARDSHELL" scan \
       -s "$SCANNERS" -e -f json -o "$OUTFILE" -c "$CONFIG"
     ;;
   weekly)
-    SCANNERS="system,trivy,grype,lynis"
+    SCANNERS="system,ssl,trivy,grype,lynis"
     OUTFILE="$REPORT_DIR/weekly-${DATE}.json"
     echo "[$(date)] Starting weekly scan (with LLM analysis)..."
     sudo --preserve-env=PATH "$HARDSHELL" scan \
@@ -34,6 +41,26 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+# 直前のレポート (今回生成分を除く) を特定して差分通知に使用
+PREV_REPORT=$(ls -t "$REPORT_DIR"/${MODE}-*.json 2>/dev/null | grep -v "$OUTFILE" | head -1 || true)
+
+# AUTO ティアの自動修復を実行 (sudo 権限で)
+echo "[$(date)] Running auto-remediation..."
+sudo --preserve-env=PATH "$HARDSHELL" fix \
+  --execute --report "$OUTFILE" --tier auto -c "$CONFIG" || \
+  echo "[$(date)] WARN: auto-remediation encountered errors"
+
+# Discord 差分通知
+if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
+  echo "[$(date)] Sending Discord notification..."
+  "$HARDSHELL" notify "$OUTFILE" \
+    ${PREV_REPORT:+--prev "$PREV_REPORT"} \
+    --webhook "$DISCORD_WEBHOOK_URL" \
+    -c "$CONFIG" || echo "[$(date)] WARN: Discord notify failed"
+else
+  echo "[$(date)] DISCORD_WEBHOOK_URL not set — skipping notification"
+fi
 
 # メトリクスを Pushgateway に送信
 "$BIN_DIR/metrics.sh" "$OUTFILE" "$MODE" || echo "[$(date)] WARN: metrics push failed"
