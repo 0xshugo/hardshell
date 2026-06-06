@@ -7,6 +7,7 @@ hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with 
 ## Features
 
 - **Built-in system scanner** — OS packages, SSH config, firewall, fail2ban, Docker audit (no external tools required)
+- **AI agent registry scanner** — Read-only checks for agent kill switches and writable tool exposure
 - **External scanner wrappers** — Trivy, Grype, Lynis, Nuclei (auto-detected, graceful skip if missing)
 - **Safer scanner execution** — Argument-based subprocess execution to reduce command injection risk from scan targets
 - **Input hardening for web scans** — Nuclei targets are validated (`http/https`) before execution
@@ -73,6 +74,26 @@ scanners = ["system", "trivy", "grype"]
 enrich = true
 analyze = false
 format = "terminal"
+
+# Optional AI-agent registry manifests for read-only posture checks.
+# Run with: hardshell scan --scanner agent-registry --config hardshell.toml
+agent_registry_paths = ["./agents.json"]
+```
+
+Minimal agent registry format:
+
+```json
+{
+  "agents": [
+    {
+      "id": "mythos/orchestrator",
+      "kill_switch": true,
+      "tools": [
+        {"id": "mcp:filesystem", "permissions": ["read"]}
+      ]
+    }
+  ]
+}
 ```
 
 
@@ -98,6 +119,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock hardshell scan
 | Scanner | Type | Requires |
 |---------|------|----------|
 | system | Built-in | Nothing (always available) |
+| agent-registry | Built-in | JSON registry path in config |
 | trivy | Wrapper | `trivy` binary |
 | grype | Wrapper | `grype` binary |
 | lynis | Wrapper | `lynis` binary |

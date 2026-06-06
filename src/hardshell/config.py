@@ -33,6 +33,10 @@ class ScanConfig(BaseModel):
         description="URLs for nuclei scanning",
     )
     docker_socket: str = Field(default="/var/run/docker.sock")
+    agent_registry_paths: list[str] = Field(
+        default_factory=list,
+        description="Read-only JSON registry files describing AI agents, tools, and controls",
+    )
 
 
 def load_config(config_path: Path | None = None) -> ScanConfig:

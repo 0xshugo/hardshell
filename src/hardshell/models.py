@@ -53,6 +53,101 @@ class Finding(BaseModel):
         return self.id.startswith("CVE-")
 
 
+class AssetType(StrEnum):
+    """Asset classes relevant to AI-agent security posture."""
+
+    AGENT = "agent"
+    TOOL = "tool"
+    MCP_SERVER = "mcp_server"
+    MEMORY = "memory"
+    RAG_CORPUS = "rag_corpus"
+    CREDENTIAL = "credential"
+    POLICY = "policy"
+
+
+class ControlStatus(StrEnum):
+    """Evaluation state for an AI-agent security control."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+class Asset(BaseModel):
+    """A read-only inventory item in the agent runtime surface."""
+
+    type: AssetType
+    identifier: str
+    owner: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @property
+    def stable_key(self) -> str:
+        return f"{self.type.value}:{self.identifier}"
+
+
+class Evidence(BaseModel):
+    """Observed evidence for a posture decision.
+
+    Evidence is intentionally descriptive and read-only: it records where a value
+    came from, not instructions for changing that source.
+    """
+
+    source: str
+    locator: str
+    observed_value: object | None = None
+
+
+class AgentFinding(BaseModel):
+    """AI-agent security finding with requirement/control/threat traceability."""
+
+    id: str
+    severity: Severity
+    title: str
+    asset: Asset
+    control_id: str
+    threat_id: str
+    requirement_id: str
+    description: str = ""
+    evidence: list[Evidence] = Field(default_factory=list)
+    remediation: str | None = None
+
+    def to_finding(self, scanner: str) -> Finding:
+        trace = (
+            f"requirement={self.requirement_id}; "
+            f"control={self.control_id}; threat={self.threat_id}"
+        )
+        description = trace if not self.description else f"{self.description}\n\n{trace}"
+        return Finding(
+            id=self.id,
+            scanner=scanner,
+            severity=self.severity,
+            title=self.title,
+            description=description,
+            affected=self.asset.stable_key,
+            remediation=self.remediation,
+        )
+
+
+class PostureState(BaseModel):
+    """Point-in-time read-only posture snapshot for agent security controls."""
+
+    assets: list[Asset] = Field(default_factory=list)
+    controls: dict[str, ControlStatus] = Field(default_factory=dict)
+    findings: list[AgentFinding] = Field(default_factory=list)
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "assets": len(self.assets),
+            "controls_pass": self._count_controls(ControlStatus.PASS),
+            "controls_fail": self._count_controls(ControlStatus.FAIL),
+            "controls_unknown": self._count_controls(ControlStatus.UNKNOWN),
+        }
+
+    def _count_controls(self, expected: ControlStatus) -> int:
+        return sum(1 for status in self.controls.values() if status == expected)
+
+
 class ScanSummary(BaseModel):
     """Aggregate counts by severity."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from hardshell.scanners.agent_registry import AgentRegistryScanner
 from hardshell.scanners.grype import GrypeScanner
 from hardshell.scanners.lynis import LynisScanner
 from hardshell.scanners.nuclei import NucleiScanner
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
 SCANNER_CLASSES: dict[str, type] = {
     "system": SystemScanner,
+    "agent-registry": AgentRegistryScanner,
     "trivy": TrivyScanner,
     "grype": GrypeScanner,
     "lynis": LynisScanner,
