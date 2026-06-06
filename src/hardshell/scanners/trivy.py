@@ -25,16 +25,29 @@ class TrivyScanner:
     def is_available() -> bool:
         return shutil.which("trivy") is not None
 
-    async def scan(self, config: ScanConfig) -> list[Finding]:
-        target = config.trivy_target
-        base = "trivy rootfs"
+    def _build_cmd(self, target: str) -> list[str]:
+        subcommand = "rootfs"
         if target.startswith("/") and target != "/":
-            base = "trivy fs"
+            subcommand = "fs"
 
-        cmd = f"{base} --format json --quiet --scanners vuln --timeout 10m {target}"
+        return [
+            "trivy",
+            subcommand,
+            "--format",
+            "json",
+            "--quiet",
+            "--scanners",
+            "vuln",
+            "--timeout",
+            "10m",
+            target,
+        ]
 
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+    async def scan(self, config: ScanConfig) -> list[Finding]:
+        cmd = self._build_cmd(config.trivy_target)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

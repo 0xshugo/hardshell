@@ -15,7 +15,7 @@ INFO=$(jq '.summary.info' "$JSON_FILE")
 TOTAL=$(jq '.summary.total' "$JSON_FILE")
 
 # EPSS/KEV enrichment (if available)
-EPSS_HIGH=$(jq -r '[.findings[] | select(.epss >= 0.1)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
+EPSS_HIGH=$(jq -r '[.findings[] | select((.epss_score // 0) >= 0.1)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
 KEV_COUNT=$(jq -r '[.findings[] | select(.in_cisa_kev == true)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
 
 # Status フラグ: 0=OK, 1=NG
