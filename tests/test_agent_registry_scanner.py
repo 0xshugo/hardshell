@@ -6,7 +6,11 @@ import pytest
 
 from hardshell.config import ScanConfig
 from hardshell.models import Severity
-from hardshell.scanners.agent_registry import AgentRegistryScanner
+from hardshell.scanners.agent_registry import (
+    AgentRegistryScanner,
+    SecretConfigScanner,
+    ToolMCPScanner,
+)
 
 
 @pytest.mark.asyncio
@@ -71,3 +75,109 @@ async def test_agent_registry_scanner_skips_missing_registry_files(tmp_path):
     findings = await AgentRegistryScanner().scan(ScanConfig(agent_registry_paths=[str(missing)]))
 
     assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_tool_mcp_scanner_flags_network_mcp_without_allowlist(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "mcp_servers": [
+                    {
+                        "id": "mcp:browser",
+                        "transport": "http",
+                        "network_access": True,
+                        "domain_allowlist": [],
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await ToolMCPScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert len(findings) == 1
+    assert findings[0].id == "AGENT-MCP-NETWORK-ALLOWLIST-001"
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].affected == "mcp_server:mcp:browser"
+    assert "REQ-MCP-001" in findings[0].description
+
+
+@pytest.mark.asyncio
+async def test_tool_mcp_scanner_flags_write_mcp_without_audit_log(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "mcp_servers": [
+                    {
+                        "id": "mcp:filesystem",
+                        "transport": "stdio",
+                        "permissions": ["read", "write"],
+                        "audit_log": False,
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await ToolMCPScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert len(findings) == 1
+    assert findings[0].id == "AGENT-MCP-AUDIT-001"
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].affected == "mcp_server:mcp:filesystem"
+    assert "REQ-MCP-002" in findings[0].description
+
+
+@pytest.mark.asyncio
+async def test_secret_config_scanner_flags_plaintext_agent_secret(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "secrets": [
+                    {
+                        "id": "openai-api-key",
+                        "storage": "plaintext_env",
+                        "scoped_to_agent": False,
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await SecretConfigScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert len(findings) == 1
+    assert findings[0].id == "AGENT-SECRET-PLAINTEXT-001"
+    assert findings[0].severity == Severity.CRITICAL
+    assert findings[0].affected == "credential:openai-api-key"
+    assert "REQ-SECRET-001" in findings[0].description
+
+
+@pytest.mark.asyncio
+async def test_secret_config_scanner_flags_unscoped_credential(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "secrets": [
+                    {
+                        "id": "browser-cookie",
+                        "storage": "keychain",
+                        "scoped_to_agent": False,
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await SecretConfigScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert len(findings) == 1
+    assert findings[0].id == "AGENT-SECRET-SCOPE-001"
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].affected == "credential:browser-cookie"
+    assert "REQ-SECRET-002" in findings[0].description

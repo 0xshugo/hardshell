@@ -8,6 +8,8 @@ hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with 
 
 - **Built-in system scanner** — OS packages, SSH config, firewall, fail2ban, Docker audit (no external tools required)
 - **AI agent registry scanner** — Read-only checks for agent kill switches and writable tool exposure
+- **MCP/tool posture scanner** — Network egress allowlists and audit logging for MCP servers
+- **Secret config scanner** — Plaintext and unscoped credential metadata checks
 - **External scanner wrappers** — Trivy, Grype, Lynis, Nuclei (auto-detected, graceful skip if missing)
 - **Safer scanner execution** — Argument-based subprocess execution to reduce command injection risk from scan targets
 - **Input hardening for web scans** — Nuclei targets are validated (`http/https`) before execution
@@ -49,7 +51,13 @@ hardshell scan --enrich
 hardshell scan --analyze
 
 # JSON report
-hardshell scan --format json --output report.json
+hardshell scan --format json --output build/reports/report.json
+
+# AI-agent posture JSON artifact for review/audit
+hardshell scan --scanner agent-registry,tool-mcp,secret-config \
+  --config hardshell.toml.example \
+  --format json \
+  --output build/hardshell-agent-posture.json
 
 # Markdown report
 hardshell scan --format markdown --output report.md
@@ -76,11 +84,11 @@ analyze = false
 format = "terminal"
 
 # Optional AI-agent registry manifests for read-only posture checks.
-# Run with: hardshell scan --scanner agent-registry --config hardshell.toml
-agent_registry_paths = ["./agents.json"]
+# Run with: hardshell scan --scanner agent-registry,tool-mcp,secret-config --config hardshell.toml
+agent_registry_paths = ["./examples/mythos-agent-registry.json"]
 ```
 
-Minimal agent registry format:
+Minimal agent registry format (see [`docs/agent-registry-schema.md`](docs/agent-registry-schema.md) and [`docs/mythos-agent-security-template.md`](docs/mythos-agent-security-template.md) for the full Mythos-era posture workflow):
 
 ```json
 {
@@ -120,6 +128,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock hardshell scan
 |---------|------|----------|
 | system | Built-in | Nothing (always available) |
 | agent-registry | Built-in | JSON registry path in config |
+| tool-mcp | Built-in | JSON registry path in config |
+| secret-config | Built-in | JSON registry path in config |
 | trivy | Wrapper | `trivy` binary |
 | grype | Wrapper | `grype` binary |
 | lynis | Wrapper | `lynis` binary |

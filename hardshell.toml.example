@@ -25,4 +25,7 @@ docker_socket = "/var/run/docker.sock"
 
 # Optional AI-agent registry manifests for read-only posture checks.
 # Example: hardshell scan --scanner agent-registry --config hardshell.toml
-agent_registry_paths = []
+agent_registry_paths = ["./examples/mythos-agent-registry.json"]
+
+# AI-agent posture scanners can be run together:
+# hardshell scan --scanner agent-registry,tool-mcp,secret-config --format json --output build/hardshell-agent-posture.json

@@ -146,8 +146,10 @@ def _output_report(result: ScanResult, cfg: ScanConfig) -> None:
         return
 
     if cfg.output:
-        Path(cfg.output).write_text(text)
-        console.print(f"\n[green]Report saved to {cfg.output}[/green]")
+        output_path = Path(cfg.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text)
+        console.print(f"\n[green]Report saved to {output_path}[/green]")
     else:
         console.print(text)
 
