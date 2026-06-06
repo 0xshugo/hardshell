@@ -65,15 +65,32 @@ def scan(
 
 @app.command()
 def fix(
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print script only, do not execute")] = True,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print script only, do not execute"),
+    ] = True,
     execute: Annotated[bool, typer.Option("--execute", help="Execute AUTO-tier actions")] = False,
     tier: Annotated[str, typer.Option("--tier", help="auto | propose | all")] = "all",
-    report: Annotated[Path | None, typer.Option("--report", "-r", help="Scan report JSON to act on")] = None,
-    output: Annotated[str | None, typer.Option("--output", "-o", help="Save fix script to file")] = None,
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", "-r", help="Scan report JSON to act on"),
+    ] = None,
+    output: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Save fix script to file"),
+    ] = None,
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
 ) -> None:
     """Generate or execute remediation actions."""
-    asyncio.run(_run_fix(dry_run=not execute, tier=tier, report_path=report, output=output, config_path=config))
+    asyncio.run(
+        _run_fix(
+            dry_run=not execute,
+            tier=tier,
+            report_path=report,
+            output=output,
+            config_path=config,
+        )
+    )
 
 
 @app.command()
@@ -106,6 +123,34 @@ def config_show(
     """Show current configuration."""
     cfg = load_config(config)
     console.print_json(json.dumps(cfg.model_dump(), default=str))
+
+
+@app.command(name="collect-hermes-registry")
+def collect_hermes_registry_command(
+    hermes_config: Annotated[
+        Path | None,
+        typer.Option("--hermes-config", help="Hermes config.yaml to read"),
+    ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option("--env-file", help="Optional .env file to inventory without values"),
+    ] = None,
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Registry JSON output path"),
+    ] = Path("build/hardshell-agent-posture.json"),
+    profile: Annotated[str, typer.Option("--profile", help="Hermes profile name")] = "default",
+) -> None:
+    """Write a secret-redacted Hermes agent registry for agent posture scanners."""
+    from hardshell.collectors.hermes_registry import write_hermes_registry
+
+    write_hermes_registry(
+        output_path=output,
+        config_path=hermes_config,
+        env_path=env_file,
+        profile=profile,
+    )
+    console.print(f"[green]Hermes registry saved to {output}[/green]")
 
 
 # ── Internal async implementations ──────────────────────────────────────────
@@ -177,7 +222,6 @@ async def _run_fix(
     config_path: Path | None,
 ) -> None:
     from hardshell.remediate.actions import RemediationTier
-    from hardshell.remediate.generator import plan_actions
     from hardshell.remediate.runner import execute_auto, render_fix_script
 
     cfg = load_config(config_path)
@@ -237,15 +281,17 @@ async def _run_notify(
         console.print(f"[red]Report not found: {report_path}[/red]")
         raise typer.Exit(1)
 
-    cfg = load_config(config_path)
     data = json.loads(report_path.read_text())
     result = ScanResult.model_validate(data)
 
     # Delta notification
     delta = compare_results(prev_path, result)
-    sent = await notify_delta(delta, result.hostname, webhook_url)
+    await notify_delta(delta, result.hostname, webhook_url)
     if delta.has_new_critical_high:
-        console.print(f"[green]Delta notification sent ({len(delta.new_findings)} new findings)[/green]")
+        console.print(
+            f"[green]Delta notification sent "
+            f"({len(delta.new_findings)} new findings)[/green]"
+        )
     else:
         console.print("[dim]No new CRITICAL/HIGH findings — notification skipped[/dim]")
 

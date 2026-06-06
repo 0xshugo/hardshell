@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import ssl
-import socket
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hardshell.config import ScanConfig

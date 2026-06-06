@@ -35,7 +35,10 @@ DEFAULT_CONFIG_PATHS = [
 class ScanConfig(BaseModel):
     scanners: list[str] = Field(
         default_factory=lambda: ["system"],
-        description="Scanners to run (system, ssl, agent-registry, tool-mcp, secret-config, trivy, grype, lynis, nuclei)",
+        description=(
+            "Scanners to run (system, ssl, agent-registry, tool-mcp, "
+            "secret-config, trivy, grype, lynis, nuclei)"
+        ),
     )
     enrich: bool = Field(default=False)
     analyze: bool = Field(default=False)
@@ -47,7 +50,10 @@ class ScanConfig(BaseModel):
     docker_socket: str = Field(default="/var/run/docker.sock")
     ssl_cert_paths: list[str] = Field(
         default_factory=list,
-        description="Explicit cert paths; if empty, auto-discovers /etc/letsencrypt/live/*/fullchain.pem",
+        description=(
+            "Explicit cert paths; if empty, auto-discovers "
+            "/etc/letsencrypt/live/*/fullchain.pem"
+        ),
     )
     agent_registry_paths: list[str] = Field(
         default_factory=list,

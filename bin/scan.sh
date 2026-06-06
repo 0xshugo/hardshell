@@ -9,8 +9,11 @@ HARDSHELL_HOME="/home/shugo/hardshell"
 CONFIG="/home/shugo/.config/hardshell/config.toml"
 REPORT_DIR="$HARDSHELL_HOME/reports"
 BIN_DIR="$HARDSHELL_HOME/bin"
+BUILD_DIR="$HARDSHELL_HOME/build"
 DATE=$(date +%Y-%m-%d)
 HARDSHELL="/usr/local/bin/hardshell"
+HERMES_CONFIG="/home/shugo/.hermes/config.yaml"
+AGENT_REGISTRY_OUT="$BUILD_DIR/hardshell-agent-posture.json"
 
 # 環境変数読み込み (cron 実行時は .env から DISCORD_WEBHOOK_URL を補完)
 ENV_FILE="/home/shugo/.env"
@@ -19,18 +22,25 @@ if [ -f "$ENV_FILE" ]; then
   set -a; source "$ENV_FILE"; set +a
 fi
 
-mkdir -p "$REPORT_DIR"
+mkdir -p "$REPORT_DIR" "$BUILD_DIR"
+
+# Hermes/MCP 実設定を secret 値なしの read-only registry JSON に正規化してから scan する
+"$HARDSHELL" collect-hermes-registry \
+  --hermes-config "$HERMES_CONFIG" \
+  --env-file "$ENV_FILE" \
+  --output "$AGENT_REGISTRY_OUT" || \
+  echo "[$(date)] WARN: Hermes registry collection failed"
 
 case "$MODE" in
   daily)
-    SCANNERS="system,ssl,trivy"
+    SCANNERS="system,ssl,agent-registry,tool-mcp,secret-config,trivy"
     OUTFILE="$REPORT_DIR/daily-${DATE}.json"
     echo "[$(date)] Starting daily scan..."
     sudo --preserve-env=PATH "$HARDSHELL" scan \
       -s "$SCANNERS" -e -f json -o "$OUTFILE" -c "$CONFIG"
     ;;
   weekly)
-    SCANNERS="system,ssl,trivy,grype,lynis"
+    SCANNERS="system,ssl,agent-registry,tool-mcp,secret-config,trivy,grype,lynis"
     OUTFILE="$REPORT_DIR/weekly-${DATE}.json"
     echo "[$(date)] Starting weekly scan (with LLM analysis)..."
     sudo --preserve-env=PATH "$HARDSHELL" scan \

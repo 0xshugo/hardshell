@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from datetime import datetime
 
 from hardshell.models import Finding

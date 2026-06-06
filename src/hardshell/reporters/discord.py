@@ -9,8 +9,8 @@ import httpx
 
 from hardshell.delta import DeltaResult
 from hardshell.models import Severity
-from hardshell.remediate.generator import PlannedAction
 from hardshell.remediate.actions import RemediationTier
+from hardshell.remediate.generator import PlannedAction
 
 SEVERITY_EMOJI = {
     Severity.CRITICAL: "🚨",
@@ -83,7 +83,10 @@ async def notify_remediation(
     if not url or (not succeeded and not failed):
         return True
 
-    lines = [f"**hardshell auto-fix** | `{hostname}` | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"]
+    lines = [
+        f"**hardshell auto-fix** | `{hostname}` | "
+        f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+    ]
     lines.append("")
 
     for action, _ in succeeded:
@@ -107,8 +110,9 @@ async def notify_proposals(
         return True
 
     lines = [
-        f"**hardshell proposals** | `{hostname}` | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-        f"",
+        f"**hardshell proposals** | `{hostname}` | "
+        f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
         f"💡 {len(actions)} action(s) available — apply when ready:",
         "",
     ]

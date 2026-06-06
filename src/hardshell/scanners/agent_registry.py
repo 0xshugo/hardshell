@@ -136,6 +136,8 @@ class AgentRegistryScanner(_RegistryFileMixin):
             normalized_permissions = {str(permission).lower() for permission in permissions}
             if "write" not in normalized_permissions:
                 continue
+            if self._has_governed_write_exception(tool):
+                continue
 
             tool_id = str(tool.get("id") or tool.get("name") or f"tool[{tool_index}]")
             findings.append(
@@ -169,6 +171,17 @@ class AgentRegistryScanner(_RegistryFileMixin):
                 )
             )
         return findings
+
+    def _has_governed_write_exception(self, tool: dict[str, Any]) -> bool:
+        exception = tool.get("write_exception")
+        if not isinstance(exception, dict):
+            return False
+        required_true_flags = ("approved", "risk_accepted", "audit_log", "rollback")
+        if any(exception.get(flag) is not True for flag in required_true_flags):
+            return False
+        return bool(str(exception.get("scope", "")).strip()) and bool(
+            str(exception.get("approver", "")).strip()
+        )
 
     def _invalid_registry_finding(self, path: Path) -> Finding:
         return Finding(
