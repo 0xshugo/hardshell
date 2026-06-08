@@ -32,3 +32,16 @@ def test_wrapper_collects_hermes_registry_before_scanning() -> None:
     assert "AGENT_REGISTRY_OUT" in script
     assert "--hermes-config" in script
     assert "--env-file" in script
+
+
+def test_wrapper_sends_always_on_discord_status_report() -> None:
+    script = SCAN_WRAPPER.read_text()
+
+    notify_index = script.index("notify \"$OUTFILE\"")
+    status_index = script.index("discord-status.sh")
+    metrics_index = script.index("metrics.sh")
+    assert notify_index < status_index < metrics_index
+
+    status_script = (ROOT / "bin" / "discord-status.sh").read_text()
+    assert "secfeed MCP" in status_script
+    assert "Critical/High findings" in status_script

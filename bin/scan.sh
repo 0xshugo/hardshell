@@ -72,6 +72,9 @@ else
   echo "[$(date)] DISCORD_WEBHOOK_URL not set — skipping notification"
 fi
 
+# 毎回の状態サマリをDiscordへ送信（delta通知とは別。shugo向け定期レポート）
+"$BIN_DIR/discord-status.sh" "$OUTFILE" "$MODE" || echo "[$(date)] WARN: Discord status report failed"
+
 # メトリクスを Pushgateway に送信
 "$BIN_DIR/metrics.sh" "$OUTFILE" "$MODE" || echo "[$(date)] WARN: metrics push failed"
 

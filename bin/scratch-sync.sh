@@ -8,6 +8,10 @@ JSON_FILE="$1"
 MODE="${2:-daily}"
 SCRATCH_DIR="/home/shugo/project/scratch"
 
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  exec sudo -u shugo -H "$0" "$JSON_FILE" "$MODE"
+fi
+
 if [[ ! -f "$JSON_FILE" ]]; then
   echo "ERROR: JSON file not found: $JSON_FILE" >&2
   exit 1
