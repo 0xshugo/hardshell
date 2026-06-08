@@ -17,7 +17,7 @@ if [[ ! -f "$JSON_FILE" ]]; then
   exit 1
 fi
 
-cd "$SCRATCH_DIR" && git pull --rebase --quiet
+cd "$SCRATCH_DIR" && git pull --rebase --autostash --quiet
 
 # JSON からサマリ生成
 HOSTNAME=$(jq -r '.hostname' "$JSON_FILE")

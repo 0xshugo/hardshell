@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCAN_WRAPPER = ROOT / "bin" / "scan.sh"
+SCRATCH_SYNC = ROOT / "bin" / "scratch-sync.sh"
 
 
 def test_daily_wrapper_runs_agent_posture_scanners() -> None:
@@ -45,3 +46,9 @@ def test_wrapper_sends_always_on_discord_status_report() -> None:
     status_script = (ROOT / "bin" / "discord-status.sh").read_text()
     assert "secfeed MCP" in status_script
     assert "Critical/High findings" in status_script
+
+
+def test_scratch_sync_autostashes_before_pull() -> None:
+    script = SCRATCH_SYNC.read_text()
+
+    assert "git pull --rebase --autostash --quiet" in script
