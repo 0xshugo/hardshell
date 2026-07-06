@@ -75,7 +75,14 @@ def test_wrapper_supports_report_date_override_for_backfill() -> None:
 
     assert "mode=daily" in stdout
     assert "report_date=2026-06-20" in stdout
-    assert "outfile=/home/shugo/hardshell/reports/daily-2026-06-20.json" in stdout
+    # HARDSHELL_HOME はスクリプト位置 (= リポジトリルート) から自動導出される
+    assert f"outfile={ROOT}/reports/daily-2026-06-20.json" in stdout
+
+
+def test_wrapper_install_dir_is_overridable_via_env() -> None:
+    stdout = run_scan_dry_run("daily", "2026-06-20", HARDSHELL_HOME="/opt/hardshell")
+
+    assert "outfile=/opt/hardshell/reports/daily-2026-06-20.json" in stdout
 
 
 def test_backfill_dry_run_disables_current_run_side_effects_by_default() -> None:

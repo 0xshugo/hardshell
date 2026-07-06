@@ -7,7 +7,9 @@ set -euo pipefail
 REPORT_FILE="${1:?json report required}"
 MODE="${2:-daily}"
 WEBHOOK_URL="${HARDSHELL_STATUS_WEBHOOK_URL:-}"
-REGISTRY_FILE="${HARDSHELL_AGENT_REGISTRY:-/home/shugo/hardshell/build/hardshell-agent-posture.json}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARDSHELL_HOME="${HARDSHELL_HOME:-$(dirname "$SCRIPT_DIR")}"
+REGISTRY_FILE="${HARDSHELL_AGENT_REGISTRY:-$HARDSHELL_HOME/build/hardshell-agent-posture.json}"
 
 if [[ -z "$WEBHOOK_URL" ]]; then
   echo "[$(date)] HARDSHELL_STATUS_WEBHOOK_URL not set — skipping status report"

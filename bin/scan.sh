@@ -15,17 +15,28 @@ set -euo pipefail
 #   HARDSHELL_SCRATCH_SYNC=auto|true|false
 
 MODE="${1:-daily}"
-HARDSHELL_HOME="/home/shugo/hardshell"
-CONFIG="/home/shugo/.config/hardshell/config.toml"
+
+# インストール先はスクリプト位置から自動推定する。
+# 注意: sudo/cron 実行では $HOME が /root になるため、$HOME 由来のパスに依存しない。
+# 全パスは環境変数で上書き可能 (HARDSHELL_HOME, HARDSHELL_CONFIG, HERMES_CONFIG, HARDSHELL_ENV_FILE, HARDSHELL_BIN)。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARDSHELL_HOME="${HARDSHELL_HOME:-$(dirname "$SCRIPT_DIR")}"
+
+# 運用ユーザー: 未指定時はリポジトリ所有者 (root cron でも所有者のホームを参照できる)
+HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME")}"
+USER_HOME="$(getent passwd "$HARDSHELL_USER" 2>/dev/null | cut -d: -f6 || true)"
+USER_HOME="${USER_HOME:-$HOME}"
+
+CONFIG="${HARDSHELL_CONFIG:-$USER_HOME/.config/hardshell/config.toml}"
 REPORT_DIR="$HARDSHELL_HOME/reports"
 BIN_DIR="$HARDSHELL_HOME/bin"
 BUILD_DIR="$HARDSHELL_HOME/build"
 TODAY=$(date +%Y-%m-%d)
 REPORT_DATE="${HARDSHELL_SCAN_DATE:-${2:-$TODAY}}"
-HARDSHELL="/usr/local/bin/hardshell"
-HERMES_CONFIG="/home/shugo/.hermes/config.yaml"
+HARDSHELL="${HARDSHELL_BIN:-/usr/local/bin/hardshell}"
+HERMES_CONFIG="${HERMES_CONFIG:-$USER_HOME/.hermes/config.yaml}"
 AGENT_REGISTRY_OUT="$BUILD_DIR/hardshell-agent-posture.json"
-ENV_FILE="/home/shugo/.env"
+ENV_FILE="${HARDSHELL_ENV_FILE:-$USER_HOME/.env}"
 
 usage() {
   echo "Usage: $0 {daily|weekly} [YYYY-MM-DD]" >&2
@@ -143,7 +154,7 @@ else
   echo "[$(date)] Skipping delta notification for non-current/backfill report"
 fi
 
-# 毎回の状態サマリをDiscordへ送信（delta通知とは別。shugo向け定期レポート）
+# 毎回の状態サマリをDiscordへ送信（delta通知とは別。運用者向け定期レポート）
 if is_enabled "${HARDSHELL_STATUS_REPORT:-auto}" "$DEFAULT_CURRENT_RUN_MUTATIONS"; then
   "$BIN_DIR/discord-status.sh" "$OUTFILE" "$MODE" || echo "[$(date)] WARN: Discord status report failed"
 else

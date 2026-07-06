@@ -115,6 +115,26 @@ Recent hardening changes improve reliability for personal VPS environments with 
 
 These changes make rollout easier across a wider range of small VPS setups, including hosts with stricter runtime constraints or minimal operational buffers.
 
+## Cron Wrapper Scripts (`bin/`)
+
+The wrapper scripts under `bin/` (daily/weekly scan, Discord status, metrics push, scratch sync) auto-detect their install location and the owning user, so no per-user paths need to be edited. Everything is overridable via environment variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HARDSHELL_HOME` | repo root (derived from script location) | Install directory (reports/build live here) |
+| `HARDSHELL_USER` | owner of `HARDSHELL_HOME` | Operating user; used to resolve home-dir paths and to drop privileges from root cron |
+| `HARDSHELL_CONFIG` | `<user home>/.config/hardshell/config.toml` | Config file passed to `hardshell scan` |
+| `HARDSHELL_ENV_FILE` | `<user home>/.env` | Env file sourced for webhook URLs etc. |
+| `HERMES_CONFIG` | `<user home>/.hermes/config.yaml` | Hermes config for the agent registry collector |
+| `HARDSHELL_BIN` | `/usr/local/bin/hardshell` | hardshell executable |
+| `HARDSHELL_AGENT_REGISTRY` | `$HARDSHELL_HOME/build/hardshell-agent-posture.json` | Agent posture registry read by `discord-status.sh` |
+| `HARDSHELL_STATUS_WEBHOOK_URL` | *(unset = skip)* | Discord webhook for the always-on status report |
+| `DISCORD_WEBHOOK_URL` | *(unset = skip)* | Discord webhook for delta notifications |
+| `HARDSHELL_PUSHGATEWAY_URL` | `http://localhost:9091` | Prometheus Pushgateway endpoint |
+| `AI_SCRATCH_DIR` | `<user home>/project/scratch` | Git repo that receives the security-status summary |
+
+Note: paths are resolved from the script location and the owning user — not from `$HOME` — so the wrappers behave identically under `sudo`/root cron (where `HOME=/root`).
+
 ## Docker
 
 ```bash

@@ -88,7 +88,7 @@ async def test_agent_registry_scanner_accepts_fully_governed_writable_tool_excep
                                     "audit_log": True,
                                     "rollback": True,
                                     "scope": "scratch workspace only",
-                                    "approver": "shugo",
+                                    "approver": "secops",
                                 },
                             }
                         ],

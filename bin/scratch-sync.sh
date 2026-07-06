@@ -6,10 +6,18 @@ set -euo pipefail
 
 JSON_FILE="$1"
 MODE="${2:-daily}"
-SCRATCH_DIR="/home/shugo/project/scratch"
 
-if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  exec sudo -u shugo -H "$0" "$JSON_FILE" "$MODE"
+# インストール先・運用ユーザーはスクリプト位置から自動推定 (env で上書き可)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARDSHELL_HOME="${HARDSHELL_HOME:-$(dirname "$SCRIPT_DIR")}"
+HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME")}"
+USER_HOME="$(getent passwd "$HARDSHELL_USER" 2>/dev/null | cut -d: -f6 || true)"
+USER_HOME="${USER_HOME:-$HOME}"
+SCRATCH_DIR="${AI_SCRATCH_DIR:-$USER_HOME/project/scratch}"
+
+# root (cron/sudo) から呼ばれた場合は運用ユーザーに降格して再実行
+if [[ "${EUID:-$(id -u)}" -eq 0 && "$HARDSHELL_USER" != "root" ]]; then
+  exec sudo -u "$HARDSHELL_USER" -H env AI_SCRATCH_DIR="${AI_SCRATCH_DIR:-}" "$0" "$JSON_FILE" "$MODE"
 fi
 
 if [[ ! -f "$JSON_FILE" ]]; then
@@ -62,7 +70,7 @@ cat > "$SCRATCH_DIR/context/security-status.md" <<EOF
 $TOP_RISKS
 
 ---
-Full reports: \`contabo:~/hardshell/reports/\`
+Full reports: \`$(hostname):$(dirname "$JSON_FILE")/\`
 EOF
 
 cd "$SCRATCH_DIR"
