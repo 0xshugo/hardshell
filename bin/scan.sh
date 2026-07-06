@@ -23,7 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARDSHELL_HOME="${HARDSHELL_HOME:-$(dirname "$SCRIPT_DIR")}"
 
 # 運用ユーザー: 未指定時はリポジトリ所有者 (root cron でも所有者のホームを参照できる)
-HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME")}"
+# ディレクトリ未存在時 (dry-run 等) は実行ユーザーにフォールバック
+HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME" 2>/dev/null || id -un)}"
 USER_HOME="$(getent passwd "$HARDSHELL_USER" 2>/dev/null | cut -d: -f6 || true)"
 USER_HOME="${USER_HOME:-$HOME}"
 
@@ -46,7 +47,8 @@ usage() {
 is_enabled() {
   local value="${1:-auto}"
   local auto_default="$2"
-  value="${value,,}"
+  # ${value,,} は bash 4+ 専用のため tr で小文字化 (macOS bash 3.2 互換)
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
   case "$value" in
     auto|"") [[ "$auto_default" == "true" ]] ;;
     1|true|yes|on) return 0 ;;

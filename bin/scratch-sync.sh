@@ -10,7 +10,7 @@ MODE="${2:-daily}"
 # インストール先・運用ユーザーはスクリプト位置から自動推定 (env で上書き可)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARDSHELL_HOME="${HARDSHELL_HOME:-$(dirname "$SCRIPT_DIR")}"
-HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME")}"
+HARDSHELL_USER="${HARDSHELL_USER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || stat -f %Su "$HARDSHELL_HOME" 2>/dev/null || id -un)}"
 USER_HOME="$(getent passwd "$HARDSHELL_USER" 2>/dev/null | cut -d: -f6 || true)"
 USER_HOME="${USER_HOME:-$HOME}"
 SCRATCH_DIR="${AI_SCRATCH_DIR:-$USER_HOME/project/scratch}"
