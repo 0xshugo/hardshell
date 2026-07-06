@@ -102,6 +102,16 @@ def test_backfill_side_effects_can_be_explicitly_enabled() -> None:
     assert "scratch_sync=true" in stdout
 
 
+def test_wrapper_refuses_env_file_with_loose_permissions() -> None:
+    script = SCAN_WRAPPER.read_text()
+
+    # .env は 600/400 かつ運用ユーザー or root 所有の場合のみ source する
+    assert "refusing to source" in script
+    source_index = script.index('source "$ENV_FILE"')
+    perms_check_index = script.index("ENV_PERMS")
+    assert perms_check_index < source_index
+
+
 def test_reports_are_gitignored() -> None:
     gitignore = (ROOT / ".gitignore").read_text().splitlines()
 

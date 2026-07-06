@@ -106,9 +106,17 @@ if [[ "${HARDSHELL_DRY_RUN:-}" =~ ^(1|true|yes|on)$ ]]; then
 fi
 
 # 環境変数読み込み (cron 実行時は .env から通知設定を補完。値は出力しない)
+# 攻撃者による書き込み・盗み見を防ぐため、所有者(運用ユーザー or root)かつ
+# パーミッション 600/400 の場合のみ source する
 if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  set -a; source "$ENV_FILE"; set +a
+  ENV_PERMS="$(stat -c %a "$ENV_FILE" 2>/dev/null || stat -f %Lp "$ENV_FILE")"
+  ENV_OWNER="$(stat -c %U "$ENV_FILE" 2>/dev/null || stat -f %Su "$ENV_FILE")"
+  if [[ "$ENV_PERMS" =~ ^[46]00$ ]] && [[ "$ENV_OWNER" == "$HARDSHELL_USER" || "$ENV_OWNER" == "root" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$ENV_FILE"; set +a
+  else
+    echo "[$(date)] WARN: refusing to source $ENV_FILE (perms=$ENV_PERMS owner=$ENV_OWNER; expected 600/400 owned by $HARDSHELL_USER or root)" >&2
+  fi
 fi
 
 mkdir -p "$REPORT_DIR" "$BUILD_DIR"
