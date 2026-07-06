@@ -8,5 +8,10 @@ WORKDIR /app
 COPY . .
 RUN pip install --no-cache-dir .
 
+# 非rootで実行 (最小権限)。rootfs 全体のスキャン等 root が必要な場合は
+# `docker run --user root` で明示的に上書きする
+RUN useradd --system --create-home --shell /usr/sbin/nologin hardshell
+USER hardshell
+
 ENTRYPOINT ["hardshell"]
 CMD ["scan"]

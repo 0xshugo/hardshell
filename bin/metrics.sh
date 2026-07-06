@@ -3,7 +3,7 @@ set -euo pipefail
 
 JSON_FILE="$1"
 MODE="${2:-daily}"
-PUSHGATEWAY="http://localhost:9091"
+PUSHGATEWAY="${HARDSHELL_PUSHGATEWAY_URL:-http://localhost:9091}"
 
 if [[ ! -f "$JSON_FILE" ]]; then exit 1; fi
 
