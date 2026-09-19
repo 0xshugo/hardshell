@@ -41,7 +41,6 @@ class Finding(BaseModel):
 
     # CTI enrichment (populated by intel modules)
     epss_score: float | None = None
-    epss_percentile: float | None = None
     in_cisa_kev: bool = False
     has_public_exploit: bool = False
 

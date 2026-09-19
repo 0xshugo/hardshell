@@ -2,15 +2,7 @@
 
 from __future__ import annotations
 
-from hardshell.models import ScanResult, Severity
-
-SEVERITY_EMOJI = {
-    Severity.CRITICAL: "!!",
-    Severity.HIGH: "!",
-    Severity.MEDIUM: "~",
-    Severity.LOW: "-",
-    Severity.INFO: ".",
-}
+from hardshell.models import ScanResult
 
 
 def render_markdown(result: ScanResult) -> str:

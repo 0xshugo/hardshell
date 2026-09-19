@@ -30,7 +30,6 @@ async def enrich_epss(findings: list[Finding]) -> None:
                     cve_id = entry.get("cve")
                     if cve_id in cve_map:
                         cve_map[cve_id].epss_score = float(entry.get("epss", 0))
-                        cve_map[cve_id].epss_percentile = float(entry.get("percentile", 0))
         except (httpx.HTTPError, KeyError, ValueError):
             pass  # Graceful degradation — enrichment is best-effort
 

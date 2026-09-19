@@ -13,8 +13,6 @@ from hardshell.models import AgentFinding, Asset, AssetType, Evidence, Finding, 
 class _RegistryFileMixin:
     """Shared read-only JSON registry loading for agent posture scanners."""
 
-    name = "registry-file"
-
     @staticmethod
     def is_available() -> bool:
         return True
@@ -49,10 +47,6 @@ class AgentRegistryScanner(_RegistryFileMixin):
     """
 
     name = "agent-registry"
-
-    @staticmethod
-    def is_available() -> bool:
-        return True
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         findings: list[Finding] = []
