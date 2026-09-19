@@ -21,10 +21,15 @@ class LynisScanner:
     async def scan(self, config: ScanConfig) -> list[Finding]:
         log_path = Path("/var/log/lynis-report.dat")
 
-        proc = await asyncio.create_subprocess_shell(
-            "lynis audit system --no-colors --quick --quiet 2>/dev/null",
+        proc = await asyncio.create_subprocess_exec(
+            "lynis",
+            "audit",
+            "system",
+            "--no-colors",
+            "--quick",
+            "--quiet",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.communicate()
 
