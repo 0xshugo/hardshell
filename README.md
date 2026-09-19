@@ -22,15 +22,24 @@ hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with 
 ## Install
 
 ```bash
-# With uv (recommended)
-uv pip install .
-
 # With pip
 pip install .
 
-# Development
-uv pip install -e ".[dev]"
+# With uv (application only)
+uv pip install .
 ```
+
+## Development
+
+Uses the same lockfile workflow as [CI](.github/workflows/ci.yml):
+
+```bash
+uv sync --all-extras
+uv run ruff check src/ tests/
+uv run pytest -v
+```
+
+Optional editable install without the lockfile: `uv pip install -e ".[dev]"`.
 
 ## Usage
 
