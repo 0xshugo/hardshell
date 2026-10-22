@@ -50,7 +50,7 @@ class SystemScanner:
         return (
             proc.returncode or 0,
             stdout.decode(errors="replace"),
-            stderr.decode(errors="replace"),
+            (stderr or b"").decode(errors="replace"),
         )
 
     # --- OS Packages ---

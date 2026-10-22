@@ -134,15 +134,24 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 echo "[$(date)] Starting $MODE scan for report_date=$REPORT_DATE..."
-"${SUDO[@]}" "$HARDSHELL" scan \
-  -s "$SCANNERS" -e "${ANALYZE_ARGS[@]}" -f json -o "$OUTFILE" -c "$CONFIG"
+SCAN_RC=0
+SCAN_OUTPUT=$(mktemp "$REPORT_DIR/.scan-XXXXXX")
+trap 'rm -f "$SCAN_OUTPUT"' EXIT
+${SUDO[@]+"${SUDO[@]}"} "$HARDSHELL" scan \
+  -s "$SCANNERS" -e ${ANALYZE_ARGS[@]+"${ANALYZE_ARGS[@]}"} -f json -o "$SCAN_OUTPUT" -c "$CONFIG" || SCAN_RC=$?
+if [[ ! -s "$SCAN_OUTPUT" ]]; then
+  echo "[$(date)] ERROR: scan failed without a diagnostic report" >&2
+  [[ "$SCAN_RC" -ne 0 ]] || SCAN_RC=1
+  exit "$SCAN_RC"
+fi
+mv "$SCAN_OUTPUT" "$OUTFILE"
 
 # 直前のレポート (今回生成分を除く) を特定して差分通知に使用
 PREV_REPORT=$(ls -t "$REPORT_DIR"/${MODE}-*.json 2>/dev/null | grep -v "$OUTFILE" | head -1 || true)
 
-if is_enabled "${HARDSHELL_AUTO_FIX:-auto}" "$DEFAULT_CURRENT_RUN_MUTATIONS"; then
+if [[ "$SCAN_RC" -eq 0 ]] && is_enabled "${HARDSHELL_AUTO_FIX:-auto}" "$DEFAULT_CURRENT_RUN_MUTATIONS"; then
   echo "[$(date)] Running auto-remediation..."
-  "${SUDO[@]}" "$HARDSHELL" fix \
+  ${SUDO[@]+"${SUDO[@]}"} "$HARDSHELL" fix \
     --execute --report "$OUTFILE" --tier auto -c "$CONFIG" || \
     echo "[$(date)] WARN: auto-remediation encountered errors"
 else
@@ -191,4 +200,5 @@ if [[ "$DEFAULT_CURRENT_RUN_MUTATIONS" == "true" ]]; then
   find "$REPORT_DIR" -name "*.md" -mtime +90 -delete 2>/dev/null || true
 fi
 
-echo "[$(date)] Scan complete: $OUTFILE"
+echo "[$(date)] Scan finished (exit=$SCAN_RC): $OUTFILE"
+exit "$SCAN_RC"

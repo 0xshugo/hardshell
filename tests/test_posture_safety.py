@@ -68,3 +68,43 @@ def test_status_notification_never_marks_partial_or_missing_scanners_green(tmp_p
         scope = {}
         exec(compile(code, "<status render only>", "exec"), scope)
         assert scope["content"].startswith(expected)
+
+
+async def test_stdio_transport_does_not_prove_absence_of_network_access(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "mcp_servers:\n  unknown:\n    command: example\n"
+        "  explicit:\n    command: example\n    network_access: true\n"
+    )
+    env = tmp_path / "empty.env"
+    env.write_text("")
+    result = collect_hermes_registry(config, env)
+    assert result["mcp_servers"][0]["network_access"] is None
+    assert result["mcp_servers"][1]["network_access"] is True
+    registry = tmp_path / "registry.json"
+    import json
+
+    registry.write_text(json.dumps({"mcp_servers": [result["mcp_servers"][0]]}))
+    policy = Path(__file__).resolve().parents[1] / "hardshell-agent-policy.yaml"
+    state = await RuntimePostureEvaluator(policy).evaluate_registry(registry)
+    assert state.controls["CT-MCP-NETWORK-EGRESS"] == ControlStatus.UNKNOWN
+
+
+async def test_system_exec_real_success_with_discarded_stderr():
+    import sys
+
+    from hardshell.scanners.system import SystemScanner
+
+    rc, stdout, stderr = await SystemScanner()._run(sys.executable, "-c", "print('ready')")
+    assert rc == 0
+    assert stdout.strip() == "ready"
+    assert stderr == ""
+
+
+def test_invalid_audit_flag_does_not_become_confirmed_logging(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text('mcp_servers:\n  example:\n    command: example\n    audit_log: "false"\n')
+    env = tmp_path / "empty.env"
+    env.write_text("")
+    result = collect_hermes_registry(config, env)
+    assert result["mcp_servers"][0]["audit_log"] is None

@@ -126,10 +126,18 @@ def _collect_mcp_server(server_id: str, server_config: dict[str, Any]) -> dict[s
     return {
         "id": server_id,
         "transport": transport,
-        "network_access": transport in {"http", "sse", "streamable_http", "websocket"},
+        "network_access": (
+            server_config["network_access"]
+            if type(server_config.get("network_access")) is bool
+            else True
+            if transport in {"http", "sse", "streamable_http", "websocket"}
+            else None
+        ),
         "domain_allowlist": _domain_allowlist(server_config, url),
         "permissions": permissions,
-        "audit_log": bool(server_config.get("audit_log", False)),
+        "audit_log": (
+            server_config["audit_log"] if type(server_config.get("audit_log")) is bool else None
+        ),
     }
 
 

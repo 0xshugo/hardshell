@@ -45,7 +45,7 @@ mcp_servers:
         "network_access": True,
         "domain_allowlist": [],
         "permissions": ["unknown"],
-        "audit_log": False,
+        "audit_log": None,
     }
     assert registry["mcp_servers"][1]["id"] == "filesystem"
     assert registry["mcp_servers"][1]["transport"] == "stdio"
