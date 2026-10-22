@@ -133,7 +133,7 @@ def _collect_mcp_server(server_id: str, server_config: dict[str, Any]) -> dict[s
             if transport in {"http", "sse", "streamable_http", "websocket"}
             else None
         ),
-        "domain_allowlist": _domain_allowlist(server_config, url),
+        "domain_allowlist": _domain_allowlist(server_config),
         "permissions": permissions,
         "audit_log": (
             server_config["audit_log"] if type(server_config.get("audit_log")) is bool else None
@@ -150,7 +150,7 @@ def _mcp_transport(server_config: dict[str, Any], url: str) -> str:
     return "stdio"
 
 
-def _domain_allowlist(server_config: dict[str, Any], url: str) -> list[str]:
+def _domain_allowlist(server_config: dict[str, Any]) -> list[str]:
     configured = server_config.get("domain_allowlist")
     if isinstance(configured, list):
         return [str(item) for item in configured]

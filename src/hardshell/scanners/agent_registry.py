@@ -190,17 +190,6 @@ class AgentRegistryScanner(_RegistryFileMixin):
             str(exception.get("approver", "")).strip()
         )
 
-    def _invalid_registry_finding(self, path: Path) -> Finding:
-        return Finding(
-            id="AGENT-REGISTRY-INVALID-JSON",
-            scanner=self.name,
-            severity=Severity.MEDIUM,
-            title="Agent registry is not valid JSON",
-            affected=str(path),
-            description="Configured agent registry could not be parsed as JSON.",
-            remediation="Fix registry JSON syntax or remove the path from hardshell config.",
-        )
-
 
 class ToolMCPScanner(_RegistryFileMixin):
     """Scan MCP server posture from read-only registry manifests."""

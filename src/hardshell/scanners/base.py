@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from hardshell.config import ScanConfig
 from hardshell.models import Finding
 
 
-@runtime_checkable
 class Scanner(Protocol):
     name: str
 
