@@ -1,0 +1,11 @@
+[Unit]
+Description=Hardshell official advisory check local check every fifteen minutes; source requests separately limited
+
+[Timer]
+OnBootSec=2m
+OnUnitInactiveSec=15m
+RandomizedDelaySec=2m
+Unit=hardshell-watch.service
+
+[Install]
+WantedBy=timers.target

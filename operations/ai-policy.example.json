@@ -1,0 +1,40 @@
+{
+  "providers": {
+    "jev": {
+      "enabled": false,
+      "model": "jev-1.13.0",
+      "price_valid_until": "2026-10-29T00:00:00Z",
+      "daily": {
+        "calls": 10,
+        "input_tokens": 655360,
+        "output_tokens": 0,
+        "usd": "0.10"
+      },
+      "monthly": {
+        "calls": 100,
+        "input_tokens": 6553600,
+        "output_tokens": 0,
+        "usd": "1.00"
+      },
+      "cache_revision": 1
+    },
+    "llm": {
+      "enabled": false,
+      "model": "SET_EXACT_LOCAL_MODEL_ID",
+      "cost_mode": "local_nonbillable",
+      "daily": {
+        "calls": 10,
+        "input_tokens": 81920,
+        "output_tokens": 5000,
+        "usd": "0"
+      },
+      "monthly": {
+        "calls": 100,
+        "input_tokens": 819200,
+        "output_tokens": 50000,
+        "usd": "0"
+      },
+      "cache_revision": 1
+    }
+  }
+}

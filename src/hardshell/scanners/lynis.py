@@ -21,15 +21,22 @@ class LynisScanner:
     async def scan(self, config: ScanConfig) -> list[Finding]:
         log_path = Path("/var/log/lynis-report.dat")
 
-        proc = await asyncio.create_subprocess_shell(
-            "lynis audit system --no-colors --quick --quiet 2>/dev/null",
+        proc = await asyncio.create_subprocess_exec(
+            "lynis",
+            "audit",
+            "system",
+            "--no-colors",
+            "--quick",
+            "--quiet",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.communicate()
 
+        if proc.returncode != 0:
+            raise RuntimeError("scanner_nonzero")
         if not log_path.exists():
-            return []
+            raise RuntimeError("scanner_missing_report")
 
         return self._parse(log_path.read_text(errors="replace"))
 

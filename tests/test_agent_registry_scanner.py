@@ -69,6 +69,78 @@ async def test_agent_registry_scanner_flags_writable_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agent_registry_scanner_accepts_fully_governed_writable_tool_exception(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "agents": [
+                    {
+                        "id": "mythos/orchestrator",
+                        "kill_switch": True,
+                        "tools": [
+                            {
+                                "id": "mcp:filesystem",
+                                "permissions": ["read", "write"],
+                                "write_exception": {
+                                    "approved": True,
+                                    "risk_accepted": True,
+                                    "audit_log": True,
+                                    "rollback": True,
+                                    "scope": "scratch workspace only",
+                                    "approver": "secops",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await AgentRegistryScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_agent_registry_scanner_flags_incomplete_writable_tool_exception(tmp_path):
+    registry = tmp_path / "agents.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "agents": [
+                    {
+                        "id": "mythos/orchestrator",
+                        "kill_switch": True,
+                        "tools": [
+                            {
+                                "id": "mcp:filesystem",
+                                "permissions": ["read", "write"],
+                                "write_exception": {
+                                    "approved": True,
+                                    "risk_accepted": False,
+                                    "audit_log": True,
+                                    "rollback": True,
+                                    "scope": "scratch workspace only",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    findings = await AgentRegistryScanner().scan(ScanConfig(agent_registry_paths=[str(registry)]))
+
+    assert len(findings) == 1
+    assert findings[0].id == "AGENT-TOOL-WRITE-001"
+    assert findings[0].remediation is not None
+    assert "approval" in findings[0].remediation.lower()
+
+
+@pytest.mark.asyncio
 async def test_agent_registry_scanner_skips_missing_registry_files(tmp_path):
     missing = tmp_path / "missing.json"
 

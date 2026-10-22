@@ -31,11 +31,25 @@ All sections are optional. Missing files are skipped; invalid JSON is reported b
 | `scope` | string/object | recommended | Human-readable or structured scope boundary. |
 | `approval_required` | boolean | recommended for write | Whether a human or policy gate is required before side effects. |
 | `rollback` | boolean | recommended for write | Whether side effects can be reverted. |
+| `write_exception` | object | optional | Explicit exception record for a governed write-capable tool. |
+
+`write_exception` is accepted only when it contains all of the following controls:
+
+```json
+{
+  "approved": true,
+  "risk_accepted": true,
+  "audit_log": true,
+  "rollback": true,
+  "scope": "narrow operator-approved target boundary",
+  "approver": "security-owner-or-change-record"
+}
+```
 
 Scanner coverage:
 
 - `agent-registry`: `REQ-RUNTIME-001` — every autonomous agent must have a kill switch.
-- `agent-registry`: `REQ-TOOL-001` — writable tools require explicit scope, approval, audit, and rollback controls.
+- `agent-registry`: `REQ-TOOL-001` — writable tools require explicit scope, approval, audit, and rollback controls; incomplete exceptions are still findings.
 
 ## `mcp_servers[]`
 

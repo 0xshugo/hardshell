@@ -1,0 +1,34 @@
+schema_version: hardshell.agent_policy.v1
+id: hardshell-agent-policy
+title: Hardshell AI Agent Runtime Policy
+controls:
+  - id: CT-RUNTIME-KILL-SWITCH
+    requirement_id: REQ-RUNTIME-001
+    threat_id: TH-RUNAWAY-AUTONOMY
+    asset_type: agent
+    statement: Every autonomous agent must have an operator-controlled kill switch.
+  - id: CT-TOOL-LEAST-PRIVILEGE
+    requirement_id: REQ-TOOL-001
+    threat_id: TH-TOOL-ABUSE
+    asset_type: tool
+    statement: Write-capable tools require least-privilege scope, approval, audit, and rollback.
+  - id: CT-MCP-NETWORK-EGRESS
+    requirement_id: REQ-MCP-001
+    threat_id: TH-TOOL-ABUSE
+    asset_type: mcp_server
+    statement: Network-capable MCP servers must use explicit domain allowlists.
+  - id: CT-MCP-AUDIT-LOGGING
+    requirement_id: REQ-MCP-002
+    threat_id: TH-TOOL-ABUSE
+    asset_type: mcp_server
+    statement: Write-capable MCP servers must have confirmed audit logging.
+  - id: CT-SECRET-MANAGED-STORAGE
+    requirement_id: REQ-SECRET-001
+    threat_id: TH-CREDENTIAL-THEFT
+    asset_type: credential
+    statement: Agent credentials must not be stored in plaintext config or env files.
+  - id: CT-SECRET-LEAST-PRIVILEGE
+    requirement_id: REQ-SECRET-002
+    threat_id: TH-CREDENTIAL-THEFT
+    asset_type: credential
+    statement: Agent credentials must be scoped to a specific agent and purpose.

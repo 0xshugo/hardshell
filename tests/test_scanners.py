@@ -1,6 +1,9 @@
 """Tests for scanner implementations."""
 
+import asyncio
 import json
+
+import pytest
 
 from hardshell.models import Severity
 from hardshell.scanners.grype import GrypeScanner
@@ -12,6 +15,41 @@ from hardshell.scanners.trivy import TrivyScanner
 
 def test_system_scanner_always_available():
     assert SystemScanner.is_available() is True
+
+
+@pytest.mark.asyncio
+async def test_system_run_uses_exec_argv_without_shell(monkeypatch):
+    captured: list[str] = []
+
+    async def fake_exec(*argv: str, **kwargs: object) -> object:
+        captured.extend(argv)
+
+        class _Proc:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b""
+
+        return _Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    scanner = SystemScanner()
+    malicious_name = "foo; echo pwned"
+    await scanner._run(
+        "docker",
+        "inspect",
+        "--format",
+        "{{.HostConfig.Privileged}}",
+        malicious_name,
+    )
+
+    assert captured == [
+        "docker",
+        "inspect",
+        "--format",
+        "{{.HostConfig.Privileged}}",
+        malicious_name,
+    ]
 
 
 def test_trivy_parse():
@@ -55,8 +93,10 @@ def test_trivy_parse():
 
 def test_trivy_parse_empty():
     scanner = TrivyScanner()
-    assert scanner._parse("{}") == []
-    assert scanner._parse("invalid json") == []
+    assert scanner._parse('{"Results": [{"Target": "fixture", "Vulnerabilities": []}]}') == []
+    for raw in ("{}", "invalid json"):
+        with pytest.raises(RuntimeError):
+            scanner._parse(raw)
 
 
 def test_grype_parse():

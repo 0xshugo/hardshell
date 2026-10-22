@@ -54,7 +54,7 @@ class TrivyScanner:
         stdout, _ = await proc.communicate()
 
         if proc.returncode != 0:
-            return []
+            raise RuntimeError("scanner_nonzero")
 
         return self._parse(stdout.decode(errors="replace"))
 
@@ -63,12 +63,20 @@ class TrivyScanner:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            return findings
+            raise RuntimeError("scanner_invalid_report") from None
 
-        results = data.get("Results", [])
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("Results"), list)
+            or not data["Results"]
+        ):
+            raise RuntimeError("scanner_invalid_report")
+        results = data["Results"]
         for result in results:
+            if not isinstance(result, dict):
+                raise RuntimeError("scanner_invalid_report")
             target = result.get("Target", "")
-            for vuln in result.get("Vulnerabilities", []):
+            for vuln in result.get("Vulnerabilities") or []:
                 cve_id = vuln.get("VulnerabilityID", "UNKNOWN")
                 sev = SEVERITY_MAP.get(vuln.get("Severity", "UNKNOWN"), Severity.INFO)
                 findings.append(

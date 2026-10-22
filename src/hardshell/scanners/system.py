@@ -33,19 +33,24 @@ class SystemScanner:
         for result in results:
             if isinstance(result, list):
                 findings.extend(result)
+        if any(isinstance(result, BaseException) for result in results):
+            raise RuntimeError("scanner_incomplete")
         return findings
 
-    async def _run(self, cmd: str) -> tuple[int, str, str]:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+    async def _run(self, *argv: str) -> tuple[int, str, str]:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, stderr = await proc.communicate()
+        expected = {"dnf": {0, 100}, "firewall-cmd": {0, 1}, "fail2ban-client": {0, 1}}
+        if proc.returncode not in expected.get(argv[0], {0}):
+            raise RuntimeError("scanner_command_failed")
         return (
             proc.returncode or 0,
             stdout.decode(errors="replace"),
-            stderr.decode(errors="replace"),
+            (stderr or b"").decode(errors="replace"),
         )
 
     # --- OS Packages ---
@@ -54,7 +59,7 @@ class SystemScanner:
         findings: list[Finding] = []
 
         if shutil.which("apt"):
-            rc, out, _ = await self._run("apt list --upgradable 2>/dev/null")
+            rc, out, _ = await self._run("apt", "list", "--upgradable")
             if rc == 0:
                 lines = [ln for ln in out.strip().splitlines() if "/" in ln and "Listing" not in ln]
                 security_lines = [ln for ln in lines if "security" in ln.lower()]
@@ -85,7 +90,7 @@ class SystemScanner:
                     )
 
         elif shutil.which("dnf"):
-            rc, out, _ = await self._run("dnf check-update --security -q 2>/dev/null")
+            rc, out, _ = await self._run("dnf", "check-update", "--security", "-q")
             if rc == 100:  # dnf returns 100 when updates are available
                 lines = [ln for ln in out.strip().splitlines() if ln.strip()]
                 if lines:
@@ -110,7 +115,7 @@ class SystemScanner:
         if not shutil.which("ss"):
             return findings
 
-        rc, out, _ = await self._run("ss -tlnp 2>/dev/null")
+        rc, out, _ = await self._run("ss", "-tlnp")
         if rc != 0:
             return findings
 
@@ -247,7 +252,7 @@ class SystemScanner:
         findings: list[Finding] = []
 
         if shutil.which("ufw"):
-            rc, out, _ = await self._run("ufw status 2>/dev/null")
+            rc, out, _ = await self._run("ufw", "status")
             if rc == 0 and "inactive" in out.lower():
                 findings.append(
                     Finding(
@@ -270,7 +275,7 @@ class SystemScanner:
                     )
                 )
         elif shutil.which("firewall-cmd"):
-            rc, out, _ = await self._run("firewall-cmd --state 2>/dev/null")
+            rc, out, _ = await self._run("firewall-cmd", "--state")
             if rc != 0 or "not running" in out.lower():
                 findings.append(
                     Finding(
@@ -283,7 +288,7 @@ class SystemScanner:
                     )
                 )
         elif shutil.which("iptables"):
-            rc, out, _ = await self._run("iptables -L -n 2>/dev/null")
+            rc, out, _ = await self._run("iptables", "-L", "-n")
             if rc == 0:
                 if out.count("ACCEPT") >= 3 and out.count("\n") < 12:
                     findings.append(
@@ -328,7 +333,7 @@ class SystemScanner:
             )
             return findings
 
-        rc, out, _ = await self._run("fail2ban-client status 2>/dev/null")
+        rc, out, _ = await self._run("fail2ban-client", "status")
         if rc != 0:
             findings.append(
                 Finding(
@@ -407,7 +412,7 @@ class SystemScanner:
 
         # Check for images using :latest tag
         docker_fmt = "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedSince}}"
-        rc, out, _ = await self._run(f"docker images --format '{docker_fmt}' 2>/dev/null")
+        rc, out, _ = await self._run("docker", "images", "--format", docker_fmt)
         if rc == 0:
             for line in out.strip().splitlines():
                 if not line.strip():
@@ -427,14 +432,18 @@ class SystemScanner:
                     )
 
         # Check for privileged or host network containers
-        rc, out, _ = await self._run("docker ps --format '{{.Names}}' 2>/dev/null")
+        rc, out, _ = await self._run("docker", "ps", "--format", "{{.Names}}")
         if rc == 0:
             for container in out.strip().splitlines():
                 if not container.strip():
                     continue
                 inspect_fmt = "{{.HostConfig.Privileged}} {{.HostConfig.NetworkMode}}"
                 rc2, inspect_out, _ = await self._run(
-                    f"docker inspect --format '{inspect_fmt}' {container} 2>/dev/null"
+                    "docker",
+                    "inspect",
+                    "--format",
+                    inspect_fmt,
+                    container,
                 )
                 if rc2 == 0:
                     parts = inspect_out.strip().split()

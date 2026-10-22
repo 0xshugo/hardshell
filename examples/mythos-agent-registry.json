@@ -47,7 +47,7 @@
       "id": "mcp:secfeed",
       "transport": "http",
       "network_access": true,
-      "domain_allowlist": ["mcp.aoifuture.com"],
+      "domain_allowlist": ["mcp.example.com"],
       "permissions": ["read"],
       "audit_log": true
     }

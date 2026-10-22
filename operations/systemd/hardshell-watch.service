@@ -1,0 +1,21 @@
+[Unit]
+Description=Hardshell official advisory early warning (read-only)
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=shugo
+Group=shugo
+WorkingDirectory=/home/shugo/hardshell
+EnvironmentFile=-/home/shugo/hardshell/build/state/ai/provider.env
+ExecStart=/home/shugo/hardshell/.venv/bin/python -m hardshell watch --ai -o /home/shugo/hardshell/build/early-warning.json
+TimeoutStartSec=240
+CPUQuota=25%
+MemoryMax=512M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/shugo/hardshell/build
+PrivateTmp=true
+# AI is fail-closed until live provider funding and the local budget both pass.
+# Docker access remains privileged even when the collector only issues read-only commands.
