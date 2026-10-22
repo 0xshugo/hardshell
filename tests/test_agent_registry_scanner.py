@@ -141,12 +141,11 @@ async def test_agent_registry_scanner_flags_incomplete_writable_tool_exception(t
 
 
 @pytest.mark.asyncio
-async def test_agent_registry_scanner_skips_missing_registry_files(tmp_path):
+async def test_agent_registry_scanner_fails_closed_on_missing_registry_files(tmp_path):
     missing = tmp_path / "missing.json"
 
-    findings = await AgentRegistryScanner().scan(ScanConfig(agent_registry_paths=[str(missing)]))
-
-    assert findings == []
+    with pytest.raises(RuntimeError, match="registry_input_unavailable"):
+        await AgentRegistryScanner().scan(ScanConfig(agent_registry_paths=[str(missing)]))
 
 
 @pytest.mark.asyncio

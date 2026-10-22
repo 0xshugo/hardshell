@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -18,15 +19,36 @@ class _RegistryFileMixin:
         return True
 
     def _load_payloads(self, config: ScanConfig) -> list[tuple[Path, Any]]:
+        if not config.agent_registry_paths or len(config.agent_registry_paths) > 32:
+            raise RuntimeError("registry_input_unavailable")
         payloads: list[tuple[Path, Any]] = []
+        hashes = []
         for registry_path in config.agent_registry_paths:
             path = Path(registry_path).expanduser()
-            if not path.exists() or not path.is_file():
-                continue
+            if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+                raise RuntimeError("registry_input_unavailable")
+            with path.open("rb") as source:
+                raw = source.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise RuntimeError("registry_input_unavailable")
             try:
-                payloads.append((path, json.loads(path.read_text())))
-            except json.JSONDecodeError:
-                continue
+                payload = json.loads(raw)
+            except (ValueError, RecursionError):
+                raise RuntimeError("registry_input_invalid") from None
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get(self.registry_section), list)
+                or any(not isinstance(item, dict) for item in payload[self.registry_section])
+            ):
+                raise RuntimeError("registry_input_invalid")
+            payloads.append((path, payload))
+            hashes.append(hashlib.sha256(raw).hexdigest())
+        self.evidence = {
+            "schema_version": 1,
+            "source_count": len(payloads),
+            "targets_observed": sum(len(p[self.registry_section]) for _, p in payloads),
+            "source_sha256": hashes,
+        }
         return payloads
 
 
@@ -47,23 +69,14 @@ class AgentRegistryScanner(_RegistryFileMixin):
     """
 
     name = "agent-registry"
+    registry_section = "agents"
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         findings: list[Finding] = []
-        for registry_path in config.agent_registry_paths:
-            path = Path(registry_path).expanduser()
-            if not path.exists() or not path.is_file():
-                continue
-
-            try:
-                payload = json.loads(path.read_text())
-            except json.JSONDecodeError:
-                findings.append(self._invalid_registry_finding(path))
-                continue
-
+        for path, payload in self._load_payloads(config):
             findings.extend(
-                agent_finding.to_finding(scanner=self.name)
-                for agent_finding in self._evaluate_registry(payload, path)
+                item.to_finding(scanner=self.name)
+                for item in self._evaluate_registry(payload, path)
             )
         return findings
 
@@ -193,6 +206,7 @@ class ToolMCPScanner(_RegistryFileMixin):
     """Scan MCP server posture from read-only registry manifests."""
 
     name = "tool-mcp"
+    registry_section = "mcp_servers"
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         findings: list[Finding] = []
@@ -300,6 +314,7 @@ class SecretConfigScanner(_RegistryFileMixin):
     """Scan credential posture from read-only registry manifests."""
 
     name = "secret-config"
+    registry_section = "secrets"
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         findings: list[Finding] = []

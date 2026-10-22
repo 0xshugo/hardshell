@@ -108,3 +108,57 @@ def test_invalid_audit_flag_does_not_become_confirmed_logging(tmp_path):
     env.write_text("")
     result = collect_hermes_registry(config, env)
     assert result["mcp_servers"][0]["audit_log"] is None
+
+
+async def test_registry_scan_requires_real_readable_input_for_each_component(tmp_path):
+    import json
+
+    import pytest
+
+    from hardshell.config import ScanConfig
+    from hardshell.scanners.agent_registry import (
+        AgentRegistryScanner,
+        SecretConfigScanner,
+        ToolMCPScanner,
+    )
+
+    for scanner_type in (AgentRegistryScanner, ToolMCPScanner, SecretConfigScanner):
+        for paths in ([], [str(tmp_path / "missing")]):
+            with pytest.raises(RuntimeError, match="registry_input_unavailable"):
+                await scanner_type().scan(ScanConfig(agent_registry_paths=paths))
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps({"agents": [{"id": "example"}], "mcp_servers": [], "secrets": []}))
+    for scanner_type in (AgentRegistryScanner, ToolMCPScanner, SecretConfigScanner):
+        scanner = scanner_type()
+        await scanner.scan(ScanConfig(agent_registry_paths=[str(path)]))
+        assert scanner.evidence["source_count"] == 1
+        assert len(scanner.evidence["source_sha256"][0]) == 64
+
+
+async def test_report_carries_registry_observation_proof(tmp_path):
+    import json
+
+    from hardshell.cli import _run_scan
+    from hardshell.config import ScanConfig
+
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "agents": [{"id": "a", "kill_switch": True, "tools": []}],
+                "mcp_servers": [],
+                "secrets": [],
+            }
+        )
+    )
+    output = tmp_path / "report.json"
+    names = ["agent-registry", "tool-mcp", "secret-config"]
+    await _run_scan(
+        ScanConfig(
+            scanners=names, agent_registry_paths=[str(registry)], format="json", output=str(output)
+        )
+    )
+    report = json.loads(output.read_text())
+    assert report["status"] == "complete"
+    assert set(report["scanner_evidence"]) == set(names)
+    assert all(proof["source_count"] == 1 for proof in report["scanner_evidence"].values())

@@ -335,6 +335,7 @@ async def _run_scan(cfg: ScanConfig) -> None:
     available = list_available_scanners()
     scanners_to_run = []
     scanner_status = {}
+    scanner_evidence = {}
     for name in cfg.scanners:
         if name == "all":
             scanners_to_run = [get_scanner(n) for n in available]
@@ -369,6 +370,8 @@ async def _run_scan(cfg: ScanConfig) -> None:
             console.print("  [red]Scan failed; evidence is incomplete[/red]")
             continue
         scanner_status[s.name] = "ok"
+        if isinstance(getattr(s, "evidence", None), dict):
+            scanner_evidence[s.name] = s.evidence
         console.print(f"  Found {len(findings)} finding(s)")
         all_findings.extend(findings)
 
@@ -394,6 +397,7 @@ async def _run_scan(cfg: ScanConfig) -> None:
         summary=ScanSummary.from_findings(all_findings),
         status="complete" if all(v == "ok" for v in scanner_status.values()) else "partial",
         scanner_status=scanner_status,
+        scanner_evidence=scanner_evidence,
     )
 
     if cfg.analyze:
