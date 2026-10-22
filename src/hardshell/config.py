@@ -47,7 +47,6 @@ class ScanConfig(BaseModel):
 
     trivy_target: str = Field(default="/")
     nuclei_targets: list[str] = Field(default_factory=list)
-    docker_socket: str = Field(default="/var/run/docker.sock")
     ssl_cert_paths: list[str] = Field(
         default_factory=list,
         description=(

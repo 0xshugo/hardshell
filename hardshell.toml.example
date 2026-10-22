@@ -20,9 +20,6 @@ trivy_target = "/"
 # Nuclei scan targets (URLs)
 nuclei_targets = []
 
-# Docker socket path
-docker_socket = "/var/run/docker.sock"
-
 # Optional AI-agent registry manifests for read-only posture checks.
 # Example: hardshell scan --scanner agent-registry --config hardshell.toml
 # チルダ (~) は実行ユーザーのホームに展開される
