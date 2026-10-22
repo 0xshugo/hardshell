@@ -43,8 +43,8 @@ mcp_servers:
         "id": "secfeed",
         "transport": "streamable_http",
         "network_access": True,
-        "domain_allowlist": ["mcp.example.com"],
-        "permissions": ["read"],
+        "domain_allowlist": [],
+        "permissions": ["unknown"],
         "audit_log": False,
     }
     assert registry["mcp_servers"][1]["id"] == "filesystem"
@@ -70,7 +70,7 @@ approvals:
 
     assert registry["schema_version"] == "hardshell.agent_registry.v1"
     assert registry["agents"][0]["id"] == "hermes/default"
-    assert registry["agents"][0]["kill_switch"] is True
+    assert registry["agents"][0]["kill_switch"] is None
     tools = {tool["id"]: tool for tool in registry["agents"][0]["tools"]}
     assert tools["toolset:terminal"]["permissions"] == ["read", "write"]
     assert tools["toolset:file"]["permissions"] == ["read", "write"]

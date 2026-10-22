@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 from datetime import datetime
 
 from hardshell.models import Finding
@@ -67,9 +68,12 @@ def render_fix_script(findings: list[Finding], tiers: list[RemediationTier] | No
     for action in actions:
         if not action.command:
             continue
-        lines.append(f"# [{action.tier.upper()}] {action.title}")
-        lines.append(f"# Finding: {action.finding.id} — {action.finding.title[:70]}")
-        lines.append(f"echo '>>> {action.title}'")
+        for comment in (
+            f"[{action.tier.upper()}] {action.title}",
+            f"Finding: {action.finding.id} — {action.finding.title[:70]}",
+        ):
+            lines.extend("# " + line for line in comment.splitlines())
+        lines.append("printf '%s\\n' " + shlex.quote(">>> " + action.title))
         lines.append(action.command)
         lines.append("")
 

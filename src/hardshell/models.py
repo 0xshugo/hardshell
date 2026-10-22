@@ -183,6 +183,8 @@ class ScanResult(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     summary: ScanSummary = Field(default_factory=ScanSummary)
     llm_analysis: str | None = None
+    status: str = "legacy_unverified"
+    scanner_status: dict[str, str] = Field(default_factory=dict)
 
     def sorted_findings(self) -> list[Finding]:
         """Return findings sorted by risk_score descending."""

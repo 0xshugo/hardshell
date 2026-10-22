@@ -108,12 +108,32 @@ def notify(
 def status() -> None:
     """Show available scanners and their status."""
     from hardshell.scanners import SCANNER_CLASSES
+
     console.print(f"[bold]hardshell[/bold] v{__version__}\n")
     console.print("[bold]Scanners:[/bold]")
     for name, cls in SCANNER_CLASSES.items():
         available = cls.is_available()
         icon = "[green]✓[/green]" if available else "[dim]✗[/dim]"
         console.print(f"  {icon} {name}")
+    report = Path(__file__).resolve().parents[2] / "build" / "early-warning.json"
+    console.print("\n[bold]Early warning / AI budget:[/bold]")
+    try:
+        from datetime import UTC, datetime
+
+        saved = json.loads(report.read_text())
+        generated = datetime.fromisoformat(saved["generated_at"].replace("Z", "+00:00"))
+        age = (datetime.now(UTC) - generated).total_seconds()
+        if not 0 <= age <= 45 * 60:
+            console.print("  [red]stale: scheduled report needs attention[/red]")
+        for provider, readiness in saved.get("ai_readiness", {}).items():
+            console.print(
+                f"  {provider}: {readiness.get('status', 'unknown')} "
+                f"({readiness.get('reason', 'funding observed; see checked_at')})"
+            )
+        if not saved.get("ai_readiness"):
+            console.print("  [yellow]AI funding not verified[/yellow]")
+    except (OSError, ValueError, KeyError, TypeError):
+        console.print("  [yellow]unverified: no valid scheduled report[/yellow]")
 
 
 @app.command(name="config")
@@ -153,13 +173,168 @@ def collect_hermes_registry_command(
     console.print(f"[green]Hermes registry saved to {output}[/green]")
 
 
+@app.command(name="watch")
+def watch(
+    inventory: Annotated[
+        Path | None, typer.Option(help="Normalized runtime JSON; omit to probe Docker")
+    ] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path("build/early-warning.json"),
+    ai: Annotated[
+        bool, typer.Option("--ai", help="Opt in to configured Jev/local LLM calls")
+    ] = False,
+) -> None:
+    """Fetch official PHP advisories and prepare approval-bound cases. Never remediate."""
+    asyncio.run(_run_watch(inventory, output, ai))
+
+
+async def _run_watch(inventory_path, output, ai):
+    import os
+    import time
+    from datetime import UTC, datetime
+
+    from hardshell.early_warning import build_report, collect_php
+    from hardshell.intel.vendor import fetch_php
+
+    state = Path(__file__).resolve().parents[2] / "build" / "state"
+    try:
+        intel = await fetch_php(cache_dir=state / "vendor")
+    except Exception:
+        intel = {"advisories": [], "gaps": [{"source": "php.net", "reason": "acquisition_failed"}]}
+    try:
+        if inventory_path:
+            if inventory_path.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError("inventory_too_large")
+            inventory = json.loads(inventory_path.read_text())
+        else:
+            inventory = await asyncio.to_thread(collect_php)
+        result = build_report(intel, inventory)
+    except Exception:
+        result = {
+            "schema_version": 1,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "status": "insufficient_evidence",
+            "cases": [],
+            "execution_enabled": False,
+            "feed_gaps": intel.get("gaps", []) + [{"reason": "inventory_failed"}],
+        }
+    if ai:
+        from hardshell.analysis.budget import BudgetDeniedError, BudgetLedger
+        from hardshell.analysis.funding import check_funding
+        from hardshell.analysis.readiness import local_readiness
+        from hardshell.analysis.triage import review
+
+        try:
+            budget = BudgetLedger(state / "ai")
+        except BudgetDeniedError:
+            budget = None
+
+        if budget is not None:
+            result["ai_readiness"] = {
+                "jev": await check_funding(
+                    budget,
+                    api_key=os.environ.get("TYPESAFE_API_KEY"),
+                    cookie=os.environ.get("HARDSHELL_TYPESAFE_BILLING_COOKIE"),
+                ),
+                "llm": await local_readiness(
+                    budget,
+                    os.environ.get("HARDSHELL_LLM_URL"),
+                    os.environ.get("HARDSHELL_LLM_MODEL"),
+                ),
+            }
+            capacity = budget.readiness("jev")
+            if capacity["status"] != "ready" and result["ai_readiness"]["jev"]["status"] == "ready":
+                result["ai_readiness"]["jev"] = capacity
+            result["ai_readiness"]["jev"]["budget"] = capacity
+        else:
+            result["ai_readiness"] = {
+                "jev": {"status": "unavailable", "reason": "budget_store_unavailable"}
+            }
+
+        ai_deadline = time.monotonic() + 100
+        for case in result["cases"][:10]:
+            if any(v.get("status") != "ready" for v in result["ai_readiness"].values()):
+                case["ai_review"] = {
+                    "status": "deferred",
+                    "reason": "ai_pipeline_unavailable",
+                    "executable": False,
+                }
+                continue
+            if time.monotonic() > ai_deadline - 90:
+                case["ai_review"] = {
+                    "status": "deferred",
+                    "reason": "run_time_budget",
+                    "executable": False,
+                }
+                continue
+            if result["feed_gaps"] or case["status"] != "potentially_affected":
+                case["ai_review"] = {
+                    "status": "deferred",
+                    "reason": "evidence_incomplete",
+                    "executable": False,
+                }
+                continue
+            try:
+                case["ai_review"] = await review(
+                    case,
+                    jev_key=os.environ.get("TYPESAFE_API_KEY"),
+                    jev_model=os.environ.get("HARDSHELL_JEV_MODEL", "jev-1.13.0"),
+                    budget=budget,
+                    llm_url=os.environ.get("HARDSHELL_LLM_URL"),
+                    llm_model=os.environ.get("HARDSHELL_LLM_MODEL"),
+                )
+            except ValueError:
+                case["ai_review"] = {
+                    "status": "needs_review",
+                    "error": "invalid_ai_config_or_state",
+                    "executable": False,
+                }
+    if ai and budget is not None:
+        try:
+            result["ai_budget_usage"] = budget.totals()
+            for provider in ("jev", "llm"):
+                capacity = budget.readiness(provider)
+                current = result["ai_readiness"].get(provider, {})
+                if current.get("status") == "ready" and capacity["status"] != "ready":
+                    result["ai_readiness"][provider] = capacity
+                else:
+                    current["budget"] = capacity
+        except (BudgetDeniedError, OSError):
+            result["ai_budget_usage"] = {"error": "budget_store_unavailable"}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix(".tmp")
+    temp.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    temp.chmod(0o600)
+    temp.replace(output)
+    console.print(
+        f"Early warning: {len(result['cases'])} cases; {result['status']}; saved to {output}"
+    )
+    if ai and any(v.get("status") != "ready" for v in result.get("ai_readiness", {}).values()):
+        for provider, readiness in result["ai_readiness"].items():
+            if readiness.get("status") != "ready":
+                console.print(f"AI unavailable ({provider}): " + readiness["reason"])
+        raise typer.Exit(3)
+    if ai and any(
+        c.get("ai_review", {}).get("jev") == "failed"
+        or c.get("ai_review", {}).get("llm") == "failed"
+        for c in result["cases"]
+    ):
+        console.print("AI call failed; cases retained for review")
+        raise typer.Exit(3)
+    if result["feed_gaps"] or any(
+        gap.get("reason") != "php_runtime_unverified" for gap in result.get("coverage_gaps", [])
+    ):
+        raise typer.Exit(2)
+
+
 # ── Internal async implementations ──────────────────────────────────────────
+
 
 async def _run_scan(cfg: ScanConfig) -> None:
     from hardshell.scanners import get_scanner, list_available_scanners
 
     available = list_available_scanners()
     scanners_to_run = []
+    scanner_status = {}
     for name in cfg.scanners:
         if name == "all":
             scanners_to_run = [get_scanner(n) for n in available]
@@ -167,11 +342,16 @@ async def _run_scan(cfg: ScanConfig) -> None:
         if name in available:
             scanners_to_run.append(get_scanner(name))
         else:
+            scanner_status[name] = "unavailable"
             console.print(f"[yellow]Scanner '{name}' not available, skipping[/yellow]")
 
     if not scanners_to_run:
+        result = ScanResult(
+            hostname=socket.gethostname(), status="partial", scanner_status=scanner_status
+        )
+        _output_report(result, cfg)
         console.print("[red]No scanners available to run.[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(2)
 
     console.print(
         f"[bold]hardshell[/bold] v{__version__} — "
@@ -182,7 +362,13 @@ async def _run_scan(cfg: ScanConfig) -> None:
     all_findings = []
     for s in scanners_to_run:
         console.print(f"\n[cyan]▶ Running {s.name} scanner...[/cyan]")
-        findings = await s.scan(cfg)
+        try:
+            findings = await s.scan(cfg)
+        except Exception:
+            scanner_status[s.name] = "failed"
+            console.print("  [red]Scan failed; evidence is incomplete[/red]")
+            continue
+        scanner_status[s.name] = "ok"
         console.print(f"  Found {len(findings)} finding(s)")
         all_findings.extend(findings)
 
@@ -192,10 +378,12 @@ async def _run_scan(cfg: ScanConfig) -> None:
         console.print("\n[cyan]▶ Enriching with CTI data...[/cyan]")
         from hardshell.intel.epss import enrich_epss
         from hardshell.intel.kev import enrich_kev
+
         await enrich_kev(all_findings)
         await enrich_epss(all_findings)
 
     from hardshell.analysis.scorer import score_findings
+
     score_findings(all_findings)
 
     result = ScanResult(
@@ -204,14 +392,19 @@ async def _run_scan(cfg: ScanConfig) -> None:
         scanners_used=[s.name for s in scanners_to_run],
         findings=all_findings,
         summary=ScanSummary.from_findings(all_findings),
+        status="complete" if all(v == "ok" for v in scanner_status.values()) else "partial",
+        scanner_status=scanner_status,
     )
 
     if cfg.analyze:
         console.print("\n[cyan]▶ Running LLM analysis...[/cyan]")
         from hardshell.analysis.llm import analyze
+
         result.llm_analysis = await analyze(result)
 
     _output_report(result, cfg)
+    if result.status != "complete":
+        raise typer.Exit(2)
 
 
 async def _run_fix(
@@ -289,8 +482,7 @@ async def _run_notify(
     await notify_delta(delta, result.hostname, webhook_url)
     if delta.has_new_critical_high:
         console.print(
-            f"[green]Delta notification sent "
-            f"({len(delta.new_findings)} new findings)[/green]"
+            f"[green]Delta notification sent ({len(delta.new_findings)} new findings)[/green]"
         )
     else:
         console.print("[dim]No new CRITICAL/HIGH findings — notification skipped[/dim]")
@@ -299,6 +491,7 @@ async def _run_notify(
     proposals = plan_actions(result.findings, tiers=[RemediationTier.PROPOSE])
     if proposals:
         from hardshell.reporters.discord import notify_proposals
+
         await notify_proposals(proposals, result.hostname, webhook_url)
         console.print(f"[cyan]Proposals sent ({len(proposals)} actions)[/cyan]")
 
@@ -306,12 +499,15 @@ async def _run_notify(
 def _output_report(result: ScanResult, cfg: ScanConfig) -> None:
     if cfg.format == "json":
         from hardshell.reporters.json_report import render_json
+
         text = render_json(result)
     elif cfg.format == "markdown":
         from hardshell.reporters.markdown import render_markdown
+
         text = render_markdown(result)
     else:
         from hardshell.reporters.terminal import render_terminal
+
         render_terminal(result, console)
         return
 

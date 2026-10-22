@@ -47,15 +47,71 @@ class RuntimePostureEvaluator:
 
         return PostureState(
             assets=self._collect_assets(payload),
-            controls=self._evaluate_controls(findings),
+            controls=self._evaluate_controls(findings, payload),
             findings=findings,
         )
 
-    def _evaluate_controls(self, findings) -> dict[str, ControlStatus]:
-        failed_controls = {finding.control_id for finding in findings}
+    def _evaluate_controls(self, findings, payload) -> dict[str, ControlStatus]:
+        failed = {finding.control_id for finding in findings}
+        agents = payload.get("agents", [])
+        servers = payload.get("mcp_servers", [])
+        secrets = payload.get("secrets", [])
+        agents = (
+            [item for item in agents if isinstance(item, dict)] if isinstance(agents, list) else []
+        )
+        servers = (
+            [item for item in servers if isinstance(item, dict)]
+            if isinstance(servers, list)
+            else []
+        )
+        secrets = (
+            [item for item in secrets if isinstance(item, dict)]
+            if isinstance(secrets, list)
+            else []
+        )
+        tools = [
+            tool for agent in agents for tool in agent.get("tools", []) if isinstance(tool, dict)
+        ]
+
+        def known_permissions(item):
+            return (
+                isinstance(item.get("permissions"), list)
+                and bool(item["permissions"])
+                and all(permission in ("read", "write") for permission in item["permissions"])
+            )
+
+        confirmed = {
+            "CT-RUNTIME-KILL-SWITCH": bool(agents)
+            and all(agent.get("kill_switch") is True for agent in agents),
+            "CT-TOOL-LEAST-PRIVILEGE": bool(tools)
+            and all(known_permissions(tool) for tool in tools),
+            "CT-MCP-NETWORK-EGRESS": bool(servers)
+            and all(
+                isinstance(server.get("network_access"), bool)
+                and (server["network_access"] is False or bool(server.get("domain_allowlist")))
+                for server in servers
+            ),
+            "CT-MCP-AUDIT-LOGGING": bool(servers)
+            and all(
+                known_permissions(server)
+                and ("write" not in server["permissions"] or server.get("audit_log") is True)
+                for server in servers
+            ),
+            "CT-SECRET-MANAGED-STORAGE": bool(secrets)
+            and all(
+                secret.get("storage") in {"keychain", "secret_manager", "vault"}
+                for secret in secrets
+            ),
+            "CT-SECRET-LEAST-PRIVILEGE": bool(secrets)
+            and all(secret.get("scoped_to_agent") is True for secret in secrets),
+        }
         return {
             str(control["id"]): (
-                ControlStatus.FAIL if str(control["id"]) in failed_controls else ControlStatus.PASS
+                ControlStatus.FAIL
+                if str(control["id"]) in failed
+                else ControlStatus.PASS
+                if confirmed.get(str(control["id"]), False)
+                else ControlStatus.UNKNOWN
             )
             for control in self.policy["controls"]
             if isinstance(control, dict) and control.get("id")

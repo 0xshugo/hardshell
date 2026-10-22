@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
@@ -69,7 +68,9 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 def _collect_agent(profile: str, toolsets: list[str], payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": f"hermes/{profile}",
-        "kill_switch": True,
+        "kill_switch": payload.get("kill_switch")
+        if type(payload.get("kill_switch")) is bool
+        else None,
         "tools": [
             {"id": f"toolset:{name}", "permissions": _toolset_permissions(name)}
             for name in toolsets
@@ -93,7 +94,7 @@ def _toolset_permissions(name: str) -> list[str]:
         return ["read"]
     if normalized in WRITE_CAPABLE_TOOLSETS:
         return ["read", "write"]
-    return ["read"]
+    return ["unknown"]
 
 
 def _approval_mode(payload: dict[str, Any]) -> str:
@@ -145,10 +146,8 @@ def _domain_allowlist(server_config: dict[str, Any], url: str) -> list[str]:
     configured = server_config.get("domain_allowlist")
     if isinstance(configured, list):
         return [str(item) for item in configured]
-    if not url:
-        return []
-    host = urlparse(url).hostname
-    return [host] if host else []
+    # A destination URL is not evidence of enforced egress restrictions.
+    return []
 
 
 def _mcp_permissions(server_config: dict[str, Any]) -> list[str]:
@@ -161,7 +160,7 @@ def _mcp_permissions(server_config: dict[str, Any]) -> list[str]:
         names = [str(name).lower() for name in tools]
         if any(any(hint in name for hint in WRITE_TOOL_NAME_HINTS) for name in names):
             return ["read", "write"]
-    return ["read"]
+    return ["unknown"]
 
 
 def _collect_env_secrets(env_path: Path | None) -> list[dict[str, Any]]:

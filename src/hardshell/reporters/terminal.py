@@ -41,7 +41,12 @@ def render_terminal(result: ScanResult, console: Console) -> None:
 
     # Findings table
     if not result.findings:
-        console.print("\n[green]No findings.[/green]")
+        if result.status == "complete":
+            console.print("\nNo findings in completed scans.")
+        else:
+            console.print(
+                "\n[yellow]Evidence incomplete; zero findings does not establish safety.[/]"
+            )
         return
 
     table = Table(show_header=True, header_style="bold", expand=True)

@@ -25,6 +25,8 @@ def render_markdown(result: ScanResult) -> str:
     lines.append(f"- **Date**: {result.timestamp:%Y-%m-%d %H:%M UTC}")
     lines.append(f"- **Scanners**: {', '.join(result.scanners_used)}")
     lines.append("")
+    lines.append(f"- **Evidence status**: {result.status}")
+    lines.append(f"- **Scanner status**: {result.scanner_status}")
     lines.append("## Summary")
     lines.append("")
     lines.append("| Critical | High | Medium | Low | Info | Total |")
@@ -33,7 +35,8 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
 
     if not result.findings:
-        lines.append("No findings.")
+        lines.append("No findings in completed scans." if result.status == "complete"
+                     else "Evidence incomplete; zero findings does not establish safety.")
         return "\n".join(lines)
 
     lines.append("## Findings")

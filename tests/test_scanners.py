@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from hardshell.models import Severity
 from hardshell.scanners.grype import GrypeScanner
 from hardshell.scanners.lynis import LynisScanner
@@ -55,8 +57,10 @@ def test_trivy_parse():
 
 def test_trivy_parse_empty():
     scanner = TrivyScanner()
-    assert scanner._parse("{}") == []
-    assert scanner._parse("invalid json") == []
+    assert scanner._parse('{"Results": [{"Target": "fixture", "Vulnerabilities": []}]}') == []
+    for raw in ("{}", "invalid json"):
+        with pytest.raises(RuntimeError):
+            scanner._parse(raw)
 
 
 def test_grype_parse():

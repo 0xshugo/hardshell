@@ -58,7 +58,10 @@ critical_or_high = [
     f for f in findings if str(f.get("severity", "")).lower() in {"critical", "high"}
 ]
 
-status_icon = "✅" if not critical_or_high else "⚠️"
+scanner_status = report.get("scanner_status") or {}
+complete = (report.get("status") == "complete" and bool(scanners)
+            and all(scanner_status.get(name) == "ok" for name in scanners))
+status_icon = "❔" if not complete else ("⚠️" if critical_or_high else "✅")
 secfeed_status = "未検出"
 if secfeed:
     permissions = ",".join(secfeed.get("permissions") or []) or "unknown"
