@@ -22,11 +22,11 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "typer>=0.15",
-    "pydantic>=2.0",
-    "rich>=13.0",
-    "httpx>=0.27",
-    "pyyaml>=6.0",
+    "typer>=0.27.3",
+    "pydantic>=2.14.1",
+    "rich>=15.0.0",
+    "httpx>=0.28.1",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
@@ -34,9 +34,9 @@ hardshell = "hardshell.cli:app"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.0.3",
-    "pytest-asyncio>=0.24",
-    "ruff>=0.8",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
 ]
 
 [tool.hatch.build.targets.wheel]
