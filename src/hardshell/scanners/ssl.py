@@ -59,9 +59,7 @@ class SslScanner:
             if result is None:
                 continue
             domain, days = result
-            finding = self._make_finding(domain, days, cert_path)
-            if finding:
-                findings.append(finding)
+            findings.append(self._make_finding(domain, days, cert_path))
 
         return findings
 
@@ -83,7 +81,7 @@ class SslScanner:
 
         return paths
 
-    def _make_finding(self, domain: str, days: int, cert_path: Path) -> Finding | None:
+    def _make_finding(self, domain: str, days: int, cert_path: Path) -> Finding:
         if days > 30:
             severity = Severity.INFO
             title = f"SSL cert '{domain}' valid for {days} days"
