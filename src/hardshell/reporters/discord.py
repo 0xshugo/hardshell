@@ -1,4 +1,4 @@
-"""Discord webhook notifier — delta alerts and remediation reports."""
+"""Discord webhook notifier — delta alerts and remediation proposals."""
 
 from __future__ import annotations
 
@@ -9,26 +9,11 @@ import httpx
 
 from hardshell.delta import DeltaResult
 from hardshell.models import Severity
-from hardshell.remediate.actions import RemediationTier
 from hardshell.remediate.generator import PlannedAction
 
-SEVERITY_EMOJI = {
-    Severity.CRITICAL: "🚨",
-    Severity.HIGH: "🔴",
-    Severity.MEDIUM: "🟠",
-    Severity.LOW: "🟡",
-    Severity.INFO: "⚪",
-}
 
-TIER_EMOJI = {
-    RemediationTier.AUTO: "✅",
-    RemediationTier.PROPOSE: "💡",
-    RemediationTier.ALERT: "⚠️",
-}
-
-
-def _get_webhook_url(webhook_url: str | None, env_var: str = "DISCORD_WEBHOOK_URL") -> str | None:
-    return webhook_url or os.environ.get(env_var)
+def _get_webhook_url(webhook_url: str | None) -> str | None:
+    return webhook_url or os.environ.get("DISCORD_WEBHOOK_URL")
 
 
 async def notify_delta(
@@ -68,33 +53,6 @@ async def notify_delta(
 
     if delta.resolved_findings:
         lines.append(f"✅ {len(delta.resolved_findings)} finding(s) resolved")
-
-    return await _send(url, "\n".join(lines))
-
-
-async def notify_remediation(
-    succeeded: list[tuple[PlannedAction, str]],
-    failed: list[tuple[PlannedAction, str]],
-    hostname: str,
-    webhook_url: str | None = None,
-) -> bool:
-    """Send auto-remediation execution report."""
-    url = _get_webhook_url(webhook_url)
-    if not url or (not succeeded and not failed):
-        return True
-
-    lines = [
-        f"**hardshell auto-fix** | `{hostname}` | "
-        f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
-    ]
-    lines.append("")
-
-    for action, _ in succeeded:
-        lines.append(f"✅ {action.title} ({action.finding.id})")
-
-    for action, output in failed:
-        snippet = output[:100].replace("\n", " ")
-        lines.append(f"❌ {action.title} ({action.finding.id}): `{snippet}`")
 
     return await _send(url, "\n".join(lines))
 

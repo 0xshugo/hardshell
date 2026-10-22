@@ -494,8 +494,6 @@ async def _run_notify(
     # PROPOSE-tier proposals
     proposals = plan_actions(result.findings, tiers=[RemediationTier.PROPOSE])
     if proposals:
-        from hardshell.reporters.discord import notify_proposals
-
         await notify_proposals(proposals, result.hostname, webhook_url)
         console.print(f"[cyan]Proposals sent ({len(proposals)} actions)[/cyan]")
 
