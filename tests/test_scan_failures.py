@@ -73,3 +73,39 @@ async def test_all_requested_scanners_missing_still_writes_failure_report(tmp_pa
         with pytest.raises(typer.Exit):
             await _run_scan(ScanConfig(scanners=["trivy"], format="json", output=str(output)))
     assert json.loads(output.read_text())["status"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_system_subcheck_exception_is_not_silently_clean():
+    from hardshell.scanners.system import SystemScanner
+
+    scanner = SystemScanner()
+
+    async def failed():
+        raise RuntimeError("private details")
+
+    async def clean(*args):
+        return []
+
+    with (
+        patch.object(scanner, "_check_os_packages", failed),
+        patch.object(scanner, "_check_listening_ports", clean),
+        patch.object(scanner, "_check_ssh_config", clean),
+        patch.object(scanner, "_check_firewall", clean),
+        patch.object(scanner, "_check_fail2ban", clean),
+        patch.object(scanner, "_check_unattended_upgrades", clean),
+        patch.object(scanner, "_check_docker", clean),
+    ):
+        with pytest.raises(RuntimeError, match="scanner_incomplete"):
+            await scanner.scan(ScanConfig())
+
+
+@pytest.mark.asyncio
+async def test_lynis_nonzero_never_reuses_previous_report():
+    from hardshell.scanners.lynis import LynisScanner
+
+    proc = AsyncMock(returncode=1)
+    proc.communicate.return_value = (b"", None)
+    with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with pytest.raises(RuntimeError, match="scanner_nonzero"):
+            await LynisScanner().scan(ScanConfig())

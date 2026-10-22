@@ -33,6 +33,8 @@ class SystemScanner:
         for result in results:
             if isinstance(result, list):
                 findings.extend(result)
+        if any(isinstance(result, BaseException) for result in results):
+            raise RuntimeError("scanner_incomplete")
         return findings
 
     async def _run(self, *argv: str) -> tuple[int, str, str]:
@@ -42,6 +44,9 @@ class SystemScanner:
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, stderr = await proc.communicate()
+        expected = {"dnf": {0, 100}, "firewall-cmd": {0, 1}, "fail2ban-client": {0, 1}}
+        if proc.returncode not in expected.get(argv[0], {0}):
+            raise RuntimeError("scanner_command_failed")
         return (
             proc.returncode or 0,
             stdout.decode(errors="replace"),

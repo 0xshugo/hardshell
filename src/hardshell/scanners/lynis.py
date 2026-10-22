@@ -33,8 +33,10 @@ class LynisScanner:
         )
         await proc.communicate()
 
+        if proc.returncode != 0:
+            raise RuntimeError("scanner_nonzero")
         if not log_path.exists():
-            return []
+            raise RuntimeError("scanner_missing_report")
 
         return self._parse(log_path.read_text(errors="replace"))
 
