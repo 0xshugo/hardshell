@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
 
 import httpx
@@ -27,11 +28,19 @@ class CoolifyWriteHandler:
     ) -> None:
         base_url = base_url.rstrip("/")
         parsed = urlsplit(base_url)
-        if parsed.scheme != "https" and not (
-            allow_private_http and parsed.scheme == "http"
-        ):
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Coolify URL cannot carry credentials, query or fragment")
+        if parsed.scheme == "http":
+            try:
+                host_address = ip_address(parsed.hostname or "")
+            except ValueError as exc:
+                raise ValueError("HTTP requires a literal loopback or Tailscale IP") from exc
+            permitted = host_address.is_loopback or host_address in ip_network("100.64.0.0/10")
+            if not allow_private_http or not permitted:
+                raise ValueError("HTTP allowed only on explicitly trusted local/Tailscale IPs")
+        elif parsed.scheme != "https":
             raise ValueError("Coolify executor requires HTTPS by default")
-        if not parsed.netloc or not parsed.path.endswith("/api/v1"):
+        if not parsed.netloc or parsed.path != "/api/v1":
             raise ValueError("expected a fixed Coolify /api/v1 URL")
         if not token:
             raise ValueError("empty Coolify token")
