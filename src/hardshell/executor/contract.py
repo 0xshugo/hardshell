@@ -10,7 +10,7 @@ import base64
 import hashlib
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
