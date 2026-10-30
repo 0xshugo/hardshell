@@ -77,7 +77,12 @@ class CoolifyAdapter(ControlAdapter):
         headers["Authorization"] = f"Bearer {self.token}"
         client = self._client
         if client is not None:
-            response = await client.request(\n                method,\n                f"{self.base_url}{path}",\n                headers=headers,\n                **kwargs,\n            )
+            response = await client.request(
+                method,
+                f"{self.base_url}{path}",
+                headers=headers,
+                **kwargs,
+            )
             response.raise_for_status()
             return response
         async with httpx.AsyncClient(timeout=20.0) as owned:
