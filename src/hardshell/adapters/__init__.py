@@ -15,6 +15,7 @@ from hardshell.adapters.base import (
     RiskLevel,
     VerificationReceipt,
 )
+from hardshell.adapters.coolify import CoolifyAdapter
 from hardshell.adapters.registry import AdapterRegistry, discover_adapters
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "ChangeStep",
     "ControlAction",
     "ControlAdapter",
+    "CoolifyAdapter",
     "EvidenceRecord",
     "ExecutionReceipt",
     "ExecutionStatus",
