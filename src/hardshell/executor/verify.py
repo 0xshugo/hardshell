@@ -103,6 +103,15 @@ class ExecutorVerifier:
                 raise ExecutorDenied("operation arguments exceed local constraints")
         if request.plan_signature.key_id == request.approval_signature.key_id:
             raise ExecutorDenied("plan and approval must use distinct signing keys")
+        plan_key = self.policy.trusted_keys.get(request.plan_signature.key_id)
+        approval_key = self.policy.trusted_keys.get(request.approval_signature.key_id)
+        if (
+            plan_key is not None
+            and approval_key is not None
+            and plan_key.public_key_pem.strip() == approval_key.public_key_pem.strip()
+        ):
+            raise ExecutorDenied("plan and approval may not share key material")
+
         self._verify_key(plan, request.plan_signature, KeyPurpose.PLAN, now)
         self._verify_key(plan, request.approval_signature, KeyPurpose.APPROVAL, now)
         return plan
