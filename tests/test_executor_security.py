@@ -254,3 +254,27 @@ def test_extra_fields_denied(bundle):
     value["shell"] = "/bin/bash"
     with pytest.raises(ValidationError):
         AuthorizedPlan.model_validate(value)
+
+@pytest.mark.parametrize("url", [
+    "http://example.com/api/v1",
+    "http://10.0.0.8:8300/api/v1",
+    "http://coolify.internal/api/v1",
+    "http://8.8.8.8/api/v1",
+    "http://100.94.245.115:8300/api/v1?token=leak",
+    "https://user:password@coolify.example/api/v1",
+])
+def test_coolify_rejects_untrusted_plaintext_or_embedded_credentials(url):
+    with pytest.raises(ValueError):
+        CoolifyWriteHandler(url, "test-token", allow_private_http=True)
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8300/api/v1",
+    "http://100.94.245.115:8300/api/v1",
+])
+def test_coolify_private_transport_requires_explicit_opt_in(url):
+    with pytest.raises(ValueError):
+        CoolifyWriteHandler(url, "test-token")
+    # Local policy must STILL prove that a tailnet endpoint is actually owned.
+    handler = CoolifyWriteHandler(url, "test-token", allow_private_http=True)
+    assert handler.base_url == url
