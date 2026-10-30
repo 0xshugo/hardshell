@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from hardshell.adapters import (
     ControlAction,
     CoolifyAdapter,
+    ExecutionReceipt,
     ExecutionStatus,
     RemediationIntent,
     ResourceKind,
@@ -66,12 +68,7 @@ async def test_coolify_observation_redacts_unlisted_secrets() -> None:
 @pytest.mark.asyncio
 async def test_coolify_deploy_is_accepted_then_verified() -> None:
     client = make_client()
-    adapter = CoolifyAdapter(
-        "https://coolify.example/api/v1",
-        "test-token",
-        allow_apply=True,
-        client=client,
-    )
+    adapter = CoolifyAdapter("https://coolify.example/api/v1", "test-token", client=client)
     resource = ResourceRef(
         provider="coolify",
         kind=ResourceKind.APPLICATION,
@@ -88,9 +85,21 @@ async def test_coolify_deploy_is_accepted_then_verified() -> None:
         risk=RiskLevel.HIGH,
     )
     plan = await adapter.plan(intent, evidence)
-    receipt = await adapter.apply(plan)
-    assert receipt.status is ExecutionStatus.ACCEPTED
-    assert receipt.external_change_ids == ["dep-1"]
+    with pytest.raises(PermissionError, match="signed plan"):
+        await adapter.apply(plan)
+    with pytest.raises(ValueError, match="direct write"):
+        CoolifyAdapter(
+            "https://coolify.example/api/v1", "test-token", allow_apply=True, client=client
+        )
+    receipt = ExecutionReceipt(
+        receipt_id="readback-example",
+        adapter_id="coolify",
+        plan_id=plan.plan_id,
+        resource=resource,
+        status=ExecutionStatus.ACCEPTED,
+        started_at=datetime.now(UTC),
+        external_change_ids=["dep-1"],
+    )
 
     verified = await adapter.verify(plan, receipt)
     assert verified.verified is True

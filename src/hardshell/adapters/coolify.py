@@ -1,12 +1,11 @@
 """Reference HCAP adapter for Coolify.
 
 The adapter is read/plan/verify by default. Mutation must be explicitly enabled
-and still requires an approved HCAP ChangePlan from the caller.
+and all writes belong in the separately sandboxed HCAP v0.2 executor.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -29,7 +28,7 @@ from hardshell.adapters.base import (
 
 
 class CoolifyAdapter(ControlAdapter):
-    """Coolify REST API adapter with explicit mutation opt-in."""
+    """Read-only Coolify REST adapter; write tokens belong to the executor."""
 
     def __init__(
         self,
@@ -41,7 +40,8 @@ class CoolifyAdapter(ControlAdapter):
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.allow_apply = allow_apply
+        if allow_apply:
+            raise ValueError("direct write access removed; use HCAP v0.2 BoundedExecutor")
         self._client = client
 
     @property
@@ -50,8 +50,6 @@ class CoolifyAdapter(ControlAdapter):
 
     def capabilities(self) -> AdapterCapabilities:
         actions = {ControlAction.OBSERVE, ControlAction.PLAN, ControlAction.VERIFY}
-        if self.allow_apply:
-            actions.add(ControlAction.APPLY)
         return AdapterCapabilities(
             adapter_id=self.adapter_id,
             resource_kinds={ResourceKind.APPLICATION, ResourceKind.CONTROL_PLANE},
@@ -208,51 +206,8 @@ class CoolifyAdapter(ControlAdapter):
         )
 
     async def apply(self, plan: ChangePlan) -> ExecutionReceipt:
-        if not self.allow_apply:
-            return await super().apply(plan)
-        if plan.adapter_id != self.adapter_id or len(plan.steps) != 1:
-            raise ValueError("invalid Coolify ChangePlan")
-
-        step = plan.steps[0]
-        resource_type = str(step.parameters.get("resource_type", ""))
-        resource_uuid = str(step.parameters.get("resource_uuid", ""))
-        started = datetime.now(UTC)
-
-        if step.action == "coolify.deploy":
-            response = await self._request("POST", "/deploy", params={"uuid": resource_uuid})
-        elif step.action == "coolify.restart":
-            collection = "applications" if resource_type == "application" else "services"
-            response = await self._request(
-                "POST",
-                f"/{collection}/{resource_uuid}/restart",
-            )
-        else:
-            raise ValueError(f"unsupported Coolify action: {step.action}")
-
-        payload = response.json() if response.content else {}
-        change_ids: list[str] = []
-        if isinstance(payload, dict):
-            deployment_uuid = payload.get("deployment_uuid")
-            if isinstance(deployment_uuid, str) and deployment_uuid:
-                change_ids.append(deployment_uuid)
-            deployments = payload.get("deployments")
-            if isinstance(deployments, list):
-                for item in deployments:
-                    if isinstance(item, dict):
-                        value = item.get("deployment_uuid")
-                        if isinstance(value, str) and value:
-                            change_ids.append(value)
-
-        return ExecutionReceipt(
-            receipt_id=f"coolify-exec-{uuid4()}",
-            adapter_id=self.adapter_id,
-            plan_id=plan.plan_id,
-            resource=plan.resource,
-            status=ExecutionStatus.ACCEPTED,
-            started_at=started,
-            external_change_ids=change_ids,
-            message="Coolify accepted the operation; verification is still required.",
-        )
+        """Direct provider mutation is forbidden outside the v0.2 executor."""
+        raise PermissionError("Coolify mutations require a verified HCAP v0.2 signed plan")
 
     async def verify(
         self,
