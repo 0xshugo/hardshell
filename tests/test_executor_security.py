@@ -278,3 +278,10 @@ def test_coolify_private_transport_requires_explicit_opt_in(url):
     # Local policy must STILL prove that a tailnet endpoint is actually owned.
     handler = CoolifyWriteHandler(url, "test-token", allow_private_http=True)
     assert handler.base_url == url
+
+@pytest.mark.asyncio
+async def test_coolify_rejects_path_injection_shape(bundle):
+    _, plan, _ = bundle
+    handler = CoolifyWriteHandler("https://coolify.example/api/v1", "test-token")
+    with pytest.raises(ExecutorDenied, match="identifier"):
+        await handler(plan.model_copy(update={"resource_id": "../api/v1/other"}))
