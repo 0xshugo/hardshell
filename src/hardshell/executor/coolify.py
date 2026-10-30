@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
 
@@ -51,6 +52,8 @@ class CoolifyWriteHandler:
     async def __call__(self, plan: AuthorizedPlan) -> list[str]:
         if plan.adapter_id != "coolify" or plan.resource_kind != "application":
             raise ExecutorDenied("unsupported resource for Coolify reference executor")
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{6,80}", plan.resource_id):
+            raise ExecutorDenied("invalid Coolify application identifier")
         if plan.operation not in {"coolify.deploy", "coolify.restart"}:
             raise ExecutorDenied("unsupported Coolify write operation")
         if plan.parameters != {"resource_type": "application"}:
