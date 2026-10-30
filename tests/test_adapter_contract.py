@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -122,6 +122,6 @@ def test_unknown_is_a_first_class_execution_status() -> None:
         plan_id="p1",
         resource=resource,
         status=ExecutionStatus.UNKNOWN,
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
     )
     assert receipt.status is ExecutionStatus.UNKNOWN
