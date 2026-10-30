@@ -4,6 +4,14 @@ VPS security hardening tool — scan, enrich with CTI, prioritize, remediate.
 
 hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with a built-in system checker, enriches findings using public threat intelligence (EPSS, CISA KEV), scores risks, and optionally generates AI-powered remediation plans.
 
+## Security Control Adapters (HCAP)
+
+Hardshell can coordinate external control planes through the Hardshell Control Adapter Protocol. The core stays fail-closed: observation does not grant mutation, provider changes return typed receipts, and queued/ambiguous effects require independent readback before they become verified success.
+
+Built-in reference: Coolify REST adapter. The same contract is designed for Docker read-only verification, local firewall executors, Cloudflare/Kubernetes adapters and application-owned security APIs.
+
+Third-party Python packages can register adapters through the `hardshell.adapters` entry-point group. See `docs/control-adapter-protocol.md` and `docs/application-security-contract.md`.
+
 ## Features
 
 - **Built-in system scanner** — OS packages, SSH config, firewall, fail2ban, Docker audit (no external tools required)
