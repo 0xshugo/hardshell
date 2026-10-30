@@ -18,7 +18,7 @@ from hardshell.executor.contract import (
 )
 
 
-class ExecutorDenied(PermissionError):
+class ExecutorDenied(PermissionError):  # noqa: N818 - stable public denial type
     """Reject unsafe execution without leaking credential material."""
 
 
