@@ -46,6 +46,7 @@ class RiskLevel(StrEnum):
 
 
 class ExecutionStatus(StrEnum):
+    ACCEPTED = "accepted"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     UNKNOWN = "unknown"
