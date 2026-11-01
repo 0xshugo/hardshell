@@ -14,15 +14,8 @@ class AllowlistEntry(BaseModel):
     reason: str = Field(default="")
 
 
-class NotifyConfig(BaseModel):
-    discord_webhook_env: str = Field(default="DISCORD_WEBHOOK_URL")
-    min_severity: str = Field(default="high")
-    delta_only: bool = Field(default=True)
-
-
 class RemediateConfig(BaseModel):
     auto_enabled: bool = Field(default=True)
-    maintenance_window: str = Field(default="02:00-05:00", description="Local time HH:MM-HH:MM")
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -60,7 +53,6 @@ class ScanConfig(BaseModel):
     )
 
     allowlist: list[AllowlistEntry] = Field(default_factory=list)
-    notify: NotifyConfig = Field(default_factory=NotifyConfig)
     remediate: RemediateConfig = Field(default_factory=RemediateConfig)
 
 
@@ -78,8 +70,6 @@ def _parse_toml(path: Path) -> ScanConfig:
     scan_data = dict(data.get("scan", {}))
     if "allowlist" in data:
         scan_data["allowlist"] = data["allowlist"]
-    if "notify" in data:
-        scan_data["notify"] = data["notify"]
     if "remediate" in data:
         scan_data["remediate"] = data["remediate"]
     return ScanConfig(**scan_data)
