@@ -156,3 +156,15 @@ Success measures (set actual numerical SLOs only after pilot measurement): detec
 - CISA KEV: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
 - FIRST EPSS: https://www.first.org/epss/
 - Microsoft automatic attack disruption (existing market baseline, not a feature parity claim): https://learn.microsoft.com/en-us/defender-xdr/automatic-attack-disruption
+
+## 9. Execution tracker (created for this proposal)
+
+| Work package | Issue | Dependency |
+| --- | --- | --- |
+| O0–O1 trust contract and observe-only signals | [#32](https://github.com/0xshugo/hardshell/issues/32) | None; start here |
+| O2 local deterministic guard | [#33](https://github.com/0xshugo/hardshell/issues/33) | O0/O1 |
+| O3 narrow containment via HCAP | [#34](https://github.com/0xshugo/hardshell/issues/34) | O2 and executor security issues #23–#27 |
+| O4 ASVF regression and evidence | [#35](https://github.com/0xshugo/hardshell/issues/35) | O0 schema; O3 for containment tests |
+| O5 public release readiness | This roadmap's O5 gate | O1–O4 plus safety/packaging review |
+
+These tickets are scope proposals. They are **not** approval to run experiments on production systems.
