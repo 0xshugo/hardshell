@@ -12,6 +12,10 @@ Built-in reference: Coolify REST adapter. The same contract is designed for Dock
 
 Third-party Python packages can register adapters through the `hardshell.adapters` entry-point group. See `docs/control-adapter-protocol.md` and `docs/application-security-contract.md`.
 
+## Autonomous Defense Roadmap (proposal)
+
+[Open-core autonomous defense roadmap](docs/autonomous-defense-roadmap.md) defines a phased path from read-only telemetry to deterministic AI/MCP tool guarding, narrowly scoped response references, independent verification and evidence-based regression tests. **These stages are proposed, not deployed capabilities.** Production mutation remains gated by the existing Executor security issues; no generic auto-fix or unrestricted Docker/root control is offered.
+
 ## Features
 
 - **Built-in system scanner** — OS packages, SSH config, firewall, fail2ban, Docker audit (no external tools required)
