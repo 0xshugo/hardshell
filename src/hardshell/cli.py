@@ -367,6 +367,8 @@ async def _run_scan(cfg: ScanConfig) -> None:
             findings = await s.scan(cfg)
         except Exception:
             scanner_status[s.name] = "failed"
+            if isinstance(getattr(s, "evidence", None), dict):
+                scanner_evidence[s.name] = s.evidence
             console.print("  [red]Scan failed; evidence is incomplete[/red]")
             continue
         scanner_status[s.name] = "ok"
