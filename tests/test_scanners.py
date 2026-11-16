@@ -197,3 +197,19 @@ def test_nuclei_build_cmd_filters_invalid_targets():
     assert '-u' in args
     assert 'https://example.com' in args
     assert 'file:///etc/passwd' not in args
+
+
+def test_trivy_rootfs_skips_container_storage_and_volatile_dirs():
+    args = TrivyScanner()._build_cmd("/")
+
+    assert args[1] == "rootfs"
+    assert args[-1] == "/"
+    skipped = {args[i + 1] for i, a in enumerate(args) if a == "--skip-dirs"}
+    assert {"/var/lib/docker", "/proc", "/tmp", "/var/tmp"} <= skipped
+
+
+def test_trivy_fs_target_has_no_rootfs_skips():
+    args = TrivyScanner()._build_cmd("/srv/app")
+
+    assert args[1] == "fs"
+    assert "--skip-dirs" not in args

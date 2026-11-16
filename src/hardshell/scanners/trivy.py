@@ -21,6 +21,20 @@ SEVERITY_MAP = {
 
 STDERR_TAIL_BYTES = 2048
 
+# Host rootfs scans skip container storage (image layers are scanned separately and
+# exhaust the walk timeout) and volatile/pseudo filesystems (runc temp files vanish
+# mid-walk and abort the scan).
+ROOTFS_SKIP_DIRS = (
+    "/var/lib/docker",
+    "/var/lib/containerd",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/tmp",
+    "/var/tmp",
+)
+
 _SECRET_KEY = (
     r"[\w.-]*(?:token|secret|passw(?:or)?d|api[_-]?key"
     r"|auth\w*|credential\w*|private[_-]?key)[\w.-]*"
@@ -73,7 +87,7 @@ class TrivyScanner:
         if target.startswith("/") and target != "/":
             subcommand = "fs"
 
-        return [
+        cmd = [
             "trivy",
             subcommand,
             "--format",
@@ -83,8 +97,11 @@ class TrivyScanner:
             "vuln",
             "--timeout",
             "10m",
-            target,
         ]
+        if subcommand == "rootfs":
+            for path in ROOTFS_SKIP_DIRS:
+                cmd += ["--skip-dirs", path]
+        return cmd + [target]
 
     async def scan(self, config: ScanConfig) -> list[Finding]:
         cmd = self._build_cmd(config.trivy_target)
