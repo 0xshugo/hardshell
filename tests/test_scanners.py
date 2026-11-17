@@ -205,7 +205,7 @@ def test_trivy_rootfs_skips_container_storage_and_volatile_dirs():
     assert args[1] == "rootfs"
     assert args[-1] == "/"
     skipped = {args[i + 1] for i, a in enumerate(args) if a == "--skip-dirs"}
-    assert {"/var/lib/docker", "/proc", "/tmp", "/var/tmp"} <= skipped
+    assert {"/var/lib/docker", "/proc", "/tmp", "/var/tmp", "**/.orca/agent-runtimes"} <= skipped
 
 
 def test_trivy_fs_target_has_no_rootfs_skips():

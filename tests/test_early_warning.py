@@ -253,3 +253,30 @@ def budget(tmp_path):
     from tests.test_request_budgets import clock, funded_ledger, policy
 
     return funded_ledger(tmp_path / "ai", policy(), clock=clock)
+
+
+def test_collect_php_collects_all_containers_without_budget_exceeded(monkeypatch):
+    import subprocess
+    from hardshell.early_warning import collect_php
+
+    names = [f"svc-{i}" for i in range(55)]
+
+    def fake_check_output(cmd, **_kw):
+        if cmd[:2] == ["docker", "ps"]:
+            return "\n".join(names) + "\n"
+        if cmd[:2] == ["docker", "inspect"]:
+            return "sha256:" + "a" * 64 + "\n"
+        raise AssertionError(cmd)
+
+    def fake_run(cmd, **_kw):
+        name = cmd[2]
+        out = "8.4.27" if name == "svc-0" else ""
+        rc = 0 if name == "svc-0" else 1
+        return subprocess.CompletedProcess(cmd, rc, out, "")
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    inv = collect_php(budget_seconds=10.0, max_workers=4)
+    assert len(inv["assets"]) == 1
+    assert len(inv["gaps"]) == 54
+    assert all(g.get("reason") == "php_runtime_unverified" for g in inv["gaps"])

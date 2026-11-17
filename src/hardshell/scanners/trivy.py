@@ -33,6 +33,7 @@ ROOTFS_SKIP_DIRS = (
     "/run",
     "/tmp",
     "/var/tmp",
+    "**/.orca/agent-runtimes",
 )
 
 _SECRET_KEY = (
