@@ -257,6 +257,7 @@ def budget(tmp_path):
 
 def test_collect_php_collects_all_containers_without_budget_exceeded(monkeypatch):
     import subprocess
+
     from hardshell.early_warning import collect_php
 
     names = [f"svc-{i}" for i in range(55)]
