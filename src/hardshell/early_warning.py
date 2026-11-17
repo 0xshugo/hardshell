@@ -7,58 +7,76 @@ import json
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from hardshell.intel.vendor import VERSION
 
 
-def collect_php():
+def _probe_php_container(name: str):
+    image = subprocess.check_output(
+        ["docker", "inspect", "--format", "{{.Image}}", name], text=True, timeout=10
+    ).strip()
+    try:
+        # -n skips application php.ini and auto_prepend_file. No shell, env, labels or network.
+        run = subprocess.run(
+            ["docker", "exec", name, "php", "-n", "-r", "echo PHP_VERSION;"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        version = run.stdout.strip()
+        current = subprocess.check_output(
+            ["docker", "inspect", "--format", "{{.Image}}", name], text=True, timeout=10
+        ).strip()
+        if current != image:
+            return None, {"asset_id": name, "reason": "image_changed"}
+        if run.returncode == 0 and VERSION.fullmatch(version):
+            return {
+                "asset_id": name,
+                "product": "php",
+                "version": version,
+                "image_digest": image,
+                "exposure": "unknown",
+                "observed_at": datetime.now(UTC).isoformat(),
+            }, None
+        # Absence from PATH does not prove that no embedded PHP runtime exists.
+        return None, {"asset_id": name, "reason": "php_runtime_unverified"}
+    except subprocess.TimeoutExpired:
+        return None, {"asset_id": name, "reason": "runtime_probe_timeout"}
+
+
+def collect_php(budget_seconds: float = 120.0, max_workers: int = 4):
     names = subprocess.check_output(
         ["docker", "ps", "--format", "{{.Names}}"], text=True, timeout=15
     ).splitlines()
     if len(names) > 200:
         raise ValueError("inventory_too_large")
-    assets, gaps = [], []
-    deadline = time.monotonic() + 60
     for name in names:
-        if time.monotonic() > deadline:
-            gaps.append({"reason": "runtime_collection_budget_exceeded"})
-            break
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
             raise ValueError("invalid_container_name")
-        image = subprocess.check_output(
-            ["docker", "inspect", "--format", "{{.Image}}", name], text=True, timeout=10
-        ).strip()
-        try:
-            # -n skips application php.ini and auto_prepend_file. No shell, env, labels or network.
-            run = subprocess.run(
-                ["docker", "exec", name, "php", "-n", "-r", "echo PHP_VERSION;"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            version = run.stdout.strip()
-            current = subprocess.check_output(
-                ["docker", "inspect", "--format", "{{.Image}}", name], text=True, timeout=10
-            ).strip()
-            if current != image:
-                gaps.append({"asset_id": name, "reason": "image_changed"})
-            elif run.returncode == 0 and VERSION.fullmatch(version):
-                assets.append(
-                    {
-                        "asset_id": name,
-                        "product": "php",
-                        "version": version,
-                        "image_digest": image,
-                        "exposure": "unknown",
-                        "observed_at": datetime.now(UTC).isoformat(),
-                    }
-                )
-            else:
-                # Absence from PATH does not prove that no embedded PHP runtime exists.
-                gaps.append({"asset_id": name, "reason": "php_runtime_unverified"})
-        except subprocess.TimeoutExpired:
-            gaps.append({"asset_id": name, "reason": "runtime_probe_timeout"})
+    assets, gaps = [], []
+    deadline = time.monotonic() + budget_seconds
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        futures = [pool.submit(_probe_php_container, name) for name in names]
+        for idx, fut in enumerate(futures):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                for pending in futures[idx:]:
+                    pending.cancel()
+                gaps.append({"reason": "runtime_collection_budget_exceeded"})
+                break
+            try:
+                asset, gap = fut.result(timeout=remaining)
+            except TimeoutError:
+                for pending in futures[idx:]:
+                    pending.cancel()
+                gaps.append({"reason": "runtime_collection_budget_exceeded"})
+                break
+            if asset is not None:
+                assets.append(asset)
+            if gap is not None:
+                gaps.append(gap)
     return {
         "observed_at": datetime.now(UTC).isoformat(),
         "assets": assets,
