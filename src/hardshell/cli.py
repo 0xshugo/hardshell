@@ -104,36 +104,105 @@ def notify(
     asyncio.run(_run_notify(report, prev, webhook, config))
 
 
+def _guardian_root() -> Path:
+    """Prefer HARDSHELL_HOME, then cwd with build/, then package checkout root."""
+    import os
+
+    env = os.environ.get("HARDSHELL_HOME")
+    if env:
+        return Path(env)
+    cwd = Path.cwd()
+    if (cwd / "build").is_dir() or (cwd / "pyproject.toml").exists():
+        return cwd
+    return Path(__file__).resolve().parents[2]
+
+
 @app.command()
 def status() -> None:
-    """Show available scanners and their status."""
+    """Show scanners, early-warning coverage, and latest remediation posture."""
     from hardshell.scanners import SCANNER_CLASSES
 
-    console.print(f"[bold]hardshell[/bold] v{__version__}\n")
+    root = _guardian_root()
+    console.print(f"[bold]hardshell[/bold] v{__version__}  ·  Solo VPS Guardian\n")
     console.print("[bold]Scanners:[/bold]")
     for name, cls in SCANNER_CLASSES.items():
         available = cls.is_available()
         icon = "[green]✓[/green]" if available else "[dim]✗[/dim]"
         console.print(f"  {icon} {name}")
-    report = Path(__file__).resolve().parents[2] / "build" / "early-warning.json"
-    console.print("\n[bold]Early warning / AI budget:[/bold]")
+    report = root / "build" / "early-warning.json"
+    console.print("\n[bold]Early warning:[/bold]")
     try:
         from datetime import UTC, datetime
 
         saved = json.loads(report.read_text())
         generated = datetime.fromisoformat(saved["generated_at"].replace("Z", "+00:00"))
         age = (datetime.now(UTC) - generated).total_seconds()
+        age_label = f"{int(age // 60)}m ago" if age >= 0 else "future"
+        status_value = saved.get("status", "unknown")
+        cases = saved.get("cases") or []
+        actionable = [c for c in cases if c.get("status") == "actionable"]
+        runtimes = saved.get("observed_runtimes") or []
+        by_product: dict[str, int] = {}
+        for asset in runtimes:
+            product = str(asset.get("product") or "unknown")
+            by_product[product] = by_product.get(product, 0) + 1
+        gaps = saved.get("coverage_gaps") or []
+        gap_reasons: dict[str, int] = {}
+        for gap in gaps:
+            reason = str(gap.get("reason") or "unknown")
+            gap_reasons[reason] = gap_reasons.get(reason, 0) + 1
+        console.print(f"  report: {status_value} · {age_label} · {report}")
         if not 0 <= age <= 45 * 60:
             console.print("  [red]stale: scheduled report needs attention[/red]")
+        console.print(
+            f"  cases: {len(cases)} total · actionable={len(actionable)} · "
+            f"runtimes={by_product or '{}'}"
+        )
+        if actionable:
+            for case in actionable[:5]:
+                console.print(
+                    f"  [red]HIGH[/red] `{case.get('advisory_id')}` "
+                    f"{case.get('product')} `{case.get('asset_id')}` "
+                    f"{case.get('installed')}→{case.get('fixed')}"
+                )
+            if len(actionable) > 5:
+                console.print(f"  … and {len(actionable) - 5} more actionable")
+        console.print(
+            "  coverage_gaps: "
+            + (
+                ", ".join(f"{k}={v}" for k, v in sorted(gap_reasons.items()))
+                if gap_reasons
+                else "none"
+            )
+        )
+        feed_gaps = saved.get("feed_gaps") or []
+        if feed_gaps:
+            console.print(f"  feed_gaps: {len(feed_gaps)}")
         for provider, readiness in saved.get("ai_readiness", {}).items():
             console.print(
-                f"  {provider}: {readiness.get('status', 'unknown')} "
+                f"  ai/{provider}: {readiness.get('status', 'unknown')} "
                 f"({readiness.get('reason', 'funding observed; see checked_at')})"
             )
         if not saved.get("ai_readiness"):
-            console.print("  [yellow]AI funding not verified[/yellow]")
+            console.print("  ai: not used on last watch (AI-less or unset)")
     except (OSError, ValueError, KeyError, TypeError):
         console.print("  [yellow]unverified: no valid scheduled report[/yellow]")
+
+    rem_dir = root / "build" / "remediation"
+    console.print("\n[bold]Remediation:[/bold]")
+    try:
+        receipts = sorted(rem_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not receipts:
+            console.print("  none yet (approve_then_apply receipts land here)")
+        else:
+            latest = json.loads(receipts[0].read_text())
+            console.print(
+                f"  last: {receipts[0].name} · status={latest.get('status')} · "
+                f"{latest.get('advisory_id')} `{latest.get('asset_id')}`"
+            )
+            console.print(f"  control_mode={latest.get('control_mode')} · total={len(receipts)}")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        console.print("  [yellow]unverified remediation directory[/yellow]")
 
 
 @app.command(name="config")

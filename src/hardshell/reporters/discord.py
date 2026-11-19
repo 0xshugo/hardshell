@@ -162,6 +162,40 @@ def _save_alert_state(path: Path, case_ids: set[str]) -> None:
     temp.replace(path)
 
 
+async def notify_remediation_lifecycle(
+    *,
+    phase: str,
+    advisory_id: str,
+    asset_id: str,
+    hostname: str,
+    detail: str = "",
+    webhook_url: str | None = None,
+) -> bool:
+    """Discord templates for approve_then_apply: pending_approval / completed / failed."""
+    url = _get_webhook_url(webhook_url) or _get_webhook_url(
+        None, env_var="HARDSHELL_STATUS_WEBHOOK_URL"
+    )
+    if not url:
+        return True
+    labels = {
+        "pending_approval": ("⏳", "要承認"),
+        "completed": ("✅", "完了"),
+        "failed": ("❌", "失敗"),
+    }
+    emoji, label = labels.get(phase, ("ℹ️", phase))
+    lines = [
+        f"{emoji} **hardshell remediation · {label}** | `{hostname}` | "
+        f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        f"`{advisory_id}` · asset=`{asset_id}`",
+    ]
+    if detail:
+        lines.append(detail[:300])
+    if phase == "pending_approval":
+        lines.append("Playbook: `operations/playbooks/nginx-upgrade.md`")
+    return await _send(url, "\n".join(lines))
+
+
 async def notify_early_warning(
     report: dict,
     hostname: str,

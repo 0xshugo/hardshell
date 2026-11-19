@@ -9,7 +9,7 @@
 | 観測 | `shugo` + `hardshell-watch.timer` | Docker 読み取り、`hardshell watch`、early-warning 出力 | 修復コマンドの自動実行 |
 | 計画 | 本 Workspace のエージェント | actionable の整理、差分案、承認待ちプレイブック | `/home` への破壊的書き込み、docker recreate |
 | 修復 | 明示承認後の `shugo` 実行枠 | プレイブック記載の docker/image 更新と検証 | `orca-control` サンドボックスからの直接修復 |
-| 通知 | watch プロセス（ルールベース） | Discord HIGH / digest | webhook 未設定時の失敗扱い |
+| 通知 | watch プロセス（ルールベース） | Discord HIGH / digest（`build/state/discord.env` + drop-in `20-discord.conf`） | webhook 未設定時はスキップ（失敗にしない） |
 
 ## パス
 
