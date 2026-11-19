@@ -139,7 +139,7 @@ def _probe_container(name: str):
     return _probe_php_container(name)
 
 
-def collect_inventory(budget_seconds: float = 120.0, max_workers: int = 4):
+def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
     names = subprocess.check_output(
         ["docker", "ps", "--format", "{{.Names}}"], text=True, timeout=15
     ).splitlines()
