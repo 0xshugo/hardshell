@@ -124,12 +124,12 @@ def test_posture_summary_states_and_secret_redaction(tmp_path: Path):
 def test_posture_summary_ed25519_signing_and_tamper_rejection(
     tmp_path: Path, ed25519_keypair: tuple[str, str, Path]
 ):
-    priv_pem, pub_pem, _ = ed25519_keypair
+    _, pub_pem, priv_path = ed25519_keypair
     envelope = build_posture_summary(
         scan_report_path=tmp_path / "none.json",
         early_warning_path=tmp_path / "none-ew.json",
         subject_label="solo-vps-1",
-        signing_private_key_pem=priv_pem,
+        signing_key_path=priv_path,
         signing_key_id="vps-key-2026",
     )
     assert envelope["signature"]["algorithm"] == "Ed25519"

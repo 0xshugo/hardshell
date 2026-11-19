@@ -215,16 +215,9 @@ def posture_export_command(
     rem_path = (
         remediation_dir if remediation_dir is not None else root / "build" / "remediation"
     )
-    private_pem: str | None = None
-    if sign_key is not None:
-        if not sign_key_id:
-            console.print("[red]--sign-key-id is required when --sign-key is specified[/red]")
-            raise typer.Exit(2)
-        try:
-            private_pem = sign_key.read_text(encoding="utf-8")
-        except OSError as exc:
-            console.print(f"[red]Failed to read signing key: {exc}[/red]")
-            raise typer.Exit(2) from exc
+    if sign_key is not None and not sign_key_id:
+        console.print("[red]--sign-key-id is required when --sign-key is specified[/red]")
+        raise typer.Exit(2)
 
     try:
         envelope = build_posture_summary(
@@ -232,7 +225,7 @@ def posture_export_command(
             early_warning_path=ew_path,
             remediation_dir=rem_path,
             subject_label=subject,
-            signing_private_key_pem=private_pem,
+            signing_key_path=sign_key,
             signing_key_id=sign_key_id,
         )
     except ValueError as exc:

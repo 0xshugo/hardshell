@@ -44,15 +44,18 @@ def _b64u_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + padding)
 
 
-def _sign_ed25519_pem(message: bytes, private_key_pem: str) -> bytes:
-    """Sign raw bytes with an Ed25519 private key PEM via OpenSSL EVP."""
+def _sign_ed25519_key_file(message: bytes, private_key_path: Path) -> bytes:
+    """Sign raw bytes with an Ed25519 private key PEM file via OpenSSL EVP.
+
+    Passes the caller's existing key file directly to OpenSSL so private key
+    material is never read into memory or written to temporary storage.
+    """
+    if not private_key_path.is_file():
+        raise ValueError("signing_key_file_not_found")
     with tempfile.TemporaryDirectory(prefix="hardshell-posture-sign-") as temp:
         directory = Path(temp)
-        key_path = directory / "private.pem"
         msg_path = directory / "message.bin"
         sig_path = directory / "signature.bin"
-        key_path.write_text(private_key_pem, encoding="utf-8")
-        key_path.chmod(0o600)
         msg_path.write_bytes(message)
         result = subprocess.run(
             [
@@ -60,7 +63,7 @@ def _sign_ed25519_pem(message: bytes, private_key_pem: str) -> bytes:
                 "pkeyutl",
                 "-sign",
                 "-inkey",
-                str(key_path),
+                str(private_key_path),
                 "-rawin",
                 "-in",
                 str(msg_path),
@@ -81,42 +84,26 @@ def _sign_ed25519_pem(message: bytes, private_key_pem: str) -> bytes:
         return sig
 
 
-def _verify_ed25519_pem(message: bytes, signature: bytes, public_key_pem: str) -> bool:
-    """Verify an Ed25519 signature via OpenSSL EVP; unavailable OpenSSL fails closed."""
-    if len(signature) != 64:
-        return False
+def _verify_ed25519_pem(message: bytes, key_id: str, sig_b64u: str, public_pem: str) -> bool:
+    """Delegate Ed25519 verification to the audited executor OpenSSL verifier."""
+    from datetime import timedelta
+
+    from hardshell.executor.contract import KeyPurpose, Signature, TrustedPublicKey
+    from hardshell.executor.verify import verify_ed25519
+
     try:
-        with tempfile.TemporaryDirectory(prefix="hardshell-posture-verify-") as temp:
-            directory = Path(temp)
-            pub_path = directory / "public.pem"
-            msg_path = directory / "message.bin"
-            sig_path = directory / "signature.bin"
-            pub_path.write_text(public_key_pem, encoding="utf-8")
-            msg_path.write_bytes(message)
-            sig_path.write_bytes(signature)
-            result = subprocess.run(
-                [
-                    "openssl",
-                    "pkeyutl",
-                    "-verify",
-                    "-pubin",
-                    "-inkey",
-                    str(pub_path),
-                    "-rawin",
-                    "-in",
-                    str(msg_path),
-                    "-sigfile",
-                    str(sig_path),
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=4,
-                check=False,
-            )
-            return result.returncode == 0
-    except (FileNotFoundError, OSError, ValueError, subprocess.TimeoutExpired):
+        sig = Signature(key_id=key_id, value=sig_b64u)
+        now = datetime.now(UTC)
+        trusted = TrustedPublicKey(
+            key_id=key_id,
+            purpose=KeyPurpose.PLAN,
+            public_key_pem=public_pem,
+            valid_from=now - timedelta(minutes=1),
+            valid_until=now + timedelta(minutes=1),
+        )
+    except ValueError:
         return False
+    return verify_ed25519(message, sig, trusted)
 
 
 def _summarize_scan_report(scan_path: Path | None) -> dict:
@@ -263,7 +250,7 @@ def build_posture_summary(
     remediation_dir: Path | None = None,
     subject_label: str = "self-hosted-vps",
     generated_at: str | None = None,
-    signing_private_key_pem: str | None = None,
+    signing_key_path: Path | None = None,
     signing_key_id: str = "",
 ) -> dict:
     """Build a sanitized, canonical-hashed (and optionally Ed25519-signed) posture summary."""
@@ -313,10 +300,10 @@ def build_posture_summary(
         "content_sha256": digest,
     }
 
-    if signing_private_key_pem is not None:
+    if signing_key_path is not None:
         if not signing_key_id:
             raise ValueError("signing_key_id required when signing")
-        sig = _sign_ed25519_pem(POSTURE_DOMAIN_PREFIX + canonical, signing_private_key_pem)
+        sig = _sign_ed25519_key_file(POSTURE_DOMAIN_PREFIX + canonical, signing_key_path)
         envelope["signature"] = {
             "algorithm": "Ed25519",
             "key_id": signing_key_id,
@@ -345,11 +332,8 @@ def verify_posture_summary(
             return False
         kid = sig_block.get("key_id")
         pub_pem = trusted_public_keys_pem.get(kid) if isinstance(kid, str) else None
-        if not pub_pem:
+        sig_val = sig_block.get("value")
+        if not pub_pem or not isinstance(sig_val, str):
             return False
-        try:
-            sig_bytes = _b64u_decode(str(sig_block.get("value") or ""))
-        except (ValueError, TypeError):
-            return False
-        return _verify_ed25519_pem(POSTURE_DOMAIN_PREFIX + canonical, sig_bytes, pub_pem)
+        return _verify_ed25519_pem(POSTURE_DOMAIN_PREFIX + canonical, kid, sig_val, pub_pem)
     return True
