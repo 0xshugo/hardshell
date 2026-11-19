@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
@@ -124,6 +126,93 @@ async def notify_proposals(
     lines.append("Run: `hardshell fix --execute --tier propose`")
 
     return await _send(url, "\n".join(lines))
+
+
+def _actionable_cases(report: dict) -> list[dict]:
+    return [
+        case
+        for case in report.get("cases", [])
+        if case.get("status") == "actionable"
+        and str(case.get("priority", "")).upper() in {"P1", "P0"}
+    ]
+
+
+def _load_alert_state(path: Path) -> set[str]:
+    try:
+        data = json.loads(path.read_text())
+        return set(data.get("case_ids", []))
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+        return set()
+
+
+def _save_alert_state(path: Path, case_ids: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps(
+            {
+                "updated_at": datetime.now(UTC).isoformat(),
+                "case_ids": sorted(case_ids),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    temp.chmod(0o600)
+    temp.replace(path)
+
+
+async def notify_early_warning(
+    report: dict,
+    hostname: str,
+    *,
+    state_path: Path | None = None,
+    webhook_url: str | None = None,
+) -> bool:
+    """Alert on new actionable early-warning cases (rule-based HIGH). Dedupes by case_id."""
+    url = _get_webhook_url(webhook_url) or _get_webhook_url(
+        None, env_var="HARDSHELL_STATUS_WEBHOOK_URL"
+    )
+    actionable = _actionable_cases(report)
+    if not url or not actionable:
+        return True
+
+    known: set[str] = set()
+    if state_path is not None:
+        known = _load_alert_state(state_path)
+    fresh = [case for case in actionable if case.get("case_id") not in known]
+    if not fresh:
+        return True
+
+    lines = [
+        f"🔴 **hardshell HIGH early-warning** | `{hostname}` | "
+        f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        f"{len(fresh)} actionable case(s) — approve_then_apply only:",
+        "",
+    ]
+    for case in fresh[:8]:
+        lines.append(
+            f"  • `{case.get('advisory_id')}` {case.get('product')} "
+            f"`{case.get('asset_id')}` {case.get('installed')}→{case.get('fixed')} "
+            f"exposure={case.get('exposure', 'unknown')}"
+        )
+        summary = (case.get("public_summary") or "")[:80]
+        if summary:
+            lines.append(f"    {summary}")
+    if len(fresh) > 8:
+        lines.append(f"  • … and {len(fresh) - 8} more")
+    lines.extend(
+        [
+            "",
+            "Playbook: `operations/playbooks/nginx-upgrade.md`",
+            "Do not auto-remediate from orca-control.",
+        ]
+    )
+    ok = await _send(url, "\n".join(lines))
+    if ok and state_path is not None:
+        _save_alert_state(state_path, known | {c["case_id"] for c in fresh if c.get("case_id")})
+    return ok
 
 
 async def _send(webhook_url: str, content: str) -> bool:

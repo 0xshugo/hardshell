@@ -266,10 +266,17 @@ def test_collect_php_collects_all_containers_without_budget_exceeded(monkeypatch
         if cmd[:2] == ["docker", "ps"]:
             return "\n".join(names) + "\n"
         if cmd[:2] == ["docker", "inspect"]:
+            fmt = cmd[cmd.index("--format") + 1] if "--format" in cmd else ""
+            if "Config.Image" in fmt:
+                return "redis:7-alpine\n"
+            if "NetworkSettings.Ports" in fmt:
+                return "{}\n"
             return "sha256:" + "a" * 64 + "\n"
         raise AssertionError(cmd)
 
     def fake_run(cmd, **_kw):
+        if len(cmd) >= 4 and cmd[3] == "nginx":
+            return subprocess.CompletedProcess(cmd, 127, "", "not found")
         name = cmd[2]
         out = "8.4.27" if name == "svc-0" else ""
         rc = 0 if name == "svc-0" else 1
@@ -281,3 +288,126 @@ def test_collect_php_collects_all_containers_without_budget_exceeded(monkeypatch
     assert len(inv["assets"]) == 1
     assert len(inv["gaps"]) == 54
     assert all(g.get("reason") == "php_runtime_unverified" for g in inv["gaps"])
+
+
+NGINX_ADVISORY_HTML = """
+<html><body><h2>nginx security advisories</h2><ul>
+<li><p>Memory corruption in HTTP/2 flow control<br>Severity: <b>major</b><br>
+<a href="https://my.f5.com/manage/s/article/K000163926">Advisory</a><br>
+<a href="https://www.cve.org/CVERecord?id=CVE-2026-123007">CVE-2026-123007</a><br>
+Not vulnerable: 1.31.9+, 1.30.7+<br>Vulnerable: 1.9.5-1.31.8</p></li>
+</ul></body></html>
+"""
+
+
+def nginx_inventory(version="1.29.3", exposure="public"):
+    return {
+        "assets": [
+            {
+                "asset_id": "factory-nginx",
+                "product": "nginx",
+                "version": version,
+                "image_digest": "sha256:" + "c" * 64,
+                "image_ref": "nginx:1.29.3-alpine",
+                "exposure": exposure,
+                "observed_at": NOW.isoformat(),
+            }
+        ],
+        "gaps": [],
+        "scope": "test nginx inventory",
+    }
+
+
+def nginx_intel():
+    from hardshell.intel.vendor import nginx_advisories
+
+    return {
+        "observed_at": NOW.isoformat(),
+        "advisories": nginx_advisories(NGINX_ADVISORY_HTML),
+        "gaps": [],
+    }
+
+
+def test_nginx2root_fixture_marks_public_factory_nginx_actionable():
+    result = build_report(nginx_intel(), nginx_inventory("1.29.3"), NOW)
+    assert result["status"] == "actionable"
+    assert len(result["cases"]) == 1
+    case = result["cases"][0]
+    assert case["advisory_id"] == "CVE-2026-123007"
+    assert case["asset_id"] == "factory-nginx"
+    assert case["installed"] == "1.29.3"
+    assert case["status"] == "actionable"
+    assert case["priority"] == "P1"
+    assert case["executable"] is False
+    assert case["requires_approval"] is True
+    assert case["fixed"] == "1.30.7"
+
+
+def test_patched_nginx_mainline_does_not_create_case():
+    result = build_report(nginx_intel(), nginx_inventory("1.31.9"), NOW)
+    assert not result["cases"]
+    assert result["status"] == "insufficient_evidence"
+
+
+def test_nginx_without_public_listener_stays_potentially_affected():
+    result = build_report(nginx_intel(), nginx_inventory("1.29.3", exposure="local"), NOW)
+    assert result["cases"][0]["status"] == "potentially_affected"
+
+
+def test_collect_nginx_records_public_edge_and_skips_php_gap(monkeypatch):
+    import subprocess
+
+    from hardshell.early_warning import collect_inventory
+
+    def fake_check_output(cmd, **_kw):
+        if cmd[:2] == ["docker", "ps"]:
+            return "factory-nginx\nredis\n"
+        if cmd[:2] == ["docker", "inspect"]:
+            fmt = cmd[cmd.index("--format") + 1]
+            name = cmd[-1]
+            if "Config.Image" in fmt:
+                return ("nginx:1.29.3-alpine\n" if name == "factory-nginx" else "redis:7\n")
+            if "NetworkSettings.Ports" in fmt:
+                if name == "factory-nginx":
+                    return json.dumps(
+                        {
+                            "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "80"}],
+                            "443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "443"}],
+                        }
+                    ) + "\n"
+                return "{}\n"
+            return "sha256:" + "d" * 64 + "\n"
+        raise AssertionError(cmd)
+
+    def fake_run(cmd, **_kw):
+        name, binary = cmd[2], cmd[3]
+        if binary == "nginx":
+            if name == "factory-nginx":
+                return subprocess.CompletedProcess(
+                    cmd, 0, "", "nginx version: nginx/1.29.3\n"
+                )
+            return subprocess.CompletedProcess(cmd, 127, "", "not found")
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    inv = collect_inventory(budget_seconds=10.0, max_workers=2)
+    assert [a["product"] for a in inv["assets"]] == ["nginx"]
+    assert inv["assets"][0]["exposure"] == "public"
+    assert inv["assets"][0]["version"] == "1.29.3"
+    assert inv["gaps"] == [{"asset_id": "redis", "reason": "php_runtime_unverified"}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_nginx_parses_official_advisory_page():
+    from hardshell.intel.vendor import fetch_nginx
+
+    def handle(request):
+        assert str(request.url) == "https://nginx.org/en/security_advisories.html"
+        return httpx.Response(200, text=NGINX_ADVISORY_HTML)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        feed = await fetch_nginx(client)
+    assert feed["advisories"][0]["id"] == "CVE-2026-123007"
+    assert feed["advisories"][0]["fixed_versions"] == ["1.31.9", "1.30.7"]
+    assert feed["advisories"][0]["severity"] == "major"

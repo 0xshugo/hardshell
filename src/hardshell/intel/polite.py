@@ -56,10 +56,11 @@ class PoliteSource:
 
     def admit(self, url):
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.netloc != "www.php.net":
+        if parsed.scheme != "https" or parsed.netloc not in {"www.php.net", "nginx.org"}:
             raise ValueError("unapproved_source")
         origin, now = parsed.netloc, self.clock()
-        interval = 3600 if parsed.path in ("/feed.atom", "/releases/feed.php") else 86400
+        feed_paths = {"/feed.atom", "/releases/feed.php", "/en/security_advisories.html"}
+        interval = 3600 if parsed.path in feed_paths else 86400
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM urls WHERE url=?", (url,)).fetchone()
@@ -200,7 +201,8 @@ class PoliteSource:
             o["verified"]
             for o in self.observations
             if o["verified"] is not None
-            and urlparse(o["url"]).path in ("/feed.atom", "/releases/feed.php")
+            and urlparse(o["url"]).path
+            in ("/feed.atom", "/releases/feed.php", "/en/security_advisories.html")
         ]
         return datetime.fromtimestamp(min(stamps), UTC).isoformat() if stamps else None
 

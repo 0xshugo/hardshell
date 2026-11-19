@@ -1,0 +1,6 @@
+# Copy to /etc/systemd/system/hardshell-watch.service.d/20-discord.conf
+# and set a real webhook, then: systemctl daemon-reload
+[Service]
+# Prefer the dedicated alert webhook; falls back to DISCORD_WEBHOOK_URL in code.
+Environment=HARDSHELL_STATUS_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE/ME
+Environment=DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE/ME
