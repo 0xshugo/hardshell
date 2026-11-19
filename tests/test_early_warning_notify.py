@@ -59,3 +59,29 @@ async def test_non_actionable_is_silent(monkeypatch):
     monkeypatch.setattr(discord, "_send", fake_send)
     assert await discord.notify_early_warning({"status": "needs_review", "cases": []}, "host")
     assert not posts
+
+
+@pytest.mark.asyncio
+async def test_remediation_lifecycle_templates(monkeypatch):
+    posts = []
+
+    async def fake_send(url, content):
+        posts.append(content)
+        return True
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.setattr(discord, "_send", fake_send)
+    assert await discord.notify_remediation_lifecycle(
+        phase="pending_approval",
+        advisory_id="CVE-2026-123007",
+        asset_id="factory-nginx",
+        hostname="host",
+    )
+    assert "要承認" in posts[0]
+    assert await discord.notify_remediation_lifecycle(
+        phase="completed",
+        advisory_id="CVE-2026-123007",
+        asset_id="factory-nginx",
+        hostname="host",
+    )
+    assert "完了" in posts[1]

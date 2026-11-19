@@ -217,7 +217,15 @@ PHPがPATHにないコンテナ、nginxバイナリを確認できないnginx系
 | secfeed | `/home/shugo/services/secfeed`, `secfeed-autonomous` |
 | 公開エッジ | aoi-system `factory-nginx` |
 | nginx 修復プレイブック | `operations/playbooks/nginx-upgrade.md` |
-| 本番反映 | `bin/deploy-production.sh`（**shugo** で実行） |
+| 週次運用 | `docs/ops/weekly-ops.md` |
+| 本番反映 | `bin/deploy-production.sh`（**shugo** / docker fallback） |
+
+導線: `install → timer → hardshell watch → Discord HIGH → approve_then_apply → receipt`。
+
+```bash
+hardshell status   # scanners + actionable + coverage_gaps + last remediation
+hardshell watch -o build/early-warning.json
+```
 
 ### JevとローカルLLMの助言
 
