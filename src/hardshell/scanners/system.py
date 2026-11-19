@@ -145,21 +145,68 @@ class SystemScanner:
                     proc_name = match.group(1)
 
                 well_known = {"22", "80", "443", "53"}
-                sev = Severity.INFO if port in well_known else Severity.MEDIUM
+                critical_db_ports = {
+                    "5432": "PostgreSQL",
+                    "3306": "MySQL/MariaDB",
+                    "6379": "Redis",
+                    "27017": "MongoDB",
+                }
+                high_admin_ports = {
+                    "8000": "Coolify dashboard",
+                    "6001": "Coolify realtime/Soketi",
+                    "6002": "Coolify terminal",
+                    "5678": "n8n workflow UI/API",
+                    "11434": "Ollama LLM API",
+                    "18789": "OpenClaw gateway",
+                }
+
+                if port in critical_db_ports:
+                    service_label = critical_db_ports[port]
+                    sev = Severity.CRITICAL
+                    title = (
+                        f"Database port {port} ({service_label} / {proc_name}) "
+                        "exposed on all interfaces"
+                    )
+                    remediation = (
+                        f"Bind {service_label} to 127.0.0.1:{port} or an internal Docker network "
+                        "and block external access at the cloud provider firewall."
+                    )
+                elif port in high_admin_ports:
+                    service_label = high_admin_ports[port]
+                    sev = Severity.HIGH
+                    title = (
+                        f"Admin/AI port {port} ({service_label} / {proc_name}) "
+                        "exposed on all interfaces"
+                    )
+                    remediation = (
+                        f"Bind {service_label} to 127.0.0.1:{port}, place behind a reverse proxy "
+                        "with authentication or Tailscale/Cloudflare Access, and restrict via "
+                        "provider firewall."
+                    )
+                elif port in well_known:
+                    sev = Severity.INFO
+                    title = f"Port {port} ({proc_name}) bound to all interfaces"
+                    remediation = (
+                        f"Bind to 127.0.0.1:{port} if internal only, or restrict via firewall."
+                    )
+                else:
+                    sev = Severity.MEDIUM
+                    title = f"Port {port} ({proc_name}) bound to all interfaces"
+                    remediation = (
+                        f"Bind to 127.0.0.1:{port} if internal only, or restrict via firewall."
+                    )
 
                 findings.append(
                     Finding(
                         id=f"SYS-PORT-{port}",
                         scanner=self.name,
                         severity=sev,
-                        title=f"Port {port} ({proc_name}) bound to all interfaces",
+                        title=title,
                         description=(
                             f"Service on 0.0.0.0:{port} is reachable from any network interface."
                         ),
                         affected=f"port {port} ({proc_name})",
-                        remediation=(
-                            f"Bind to 127.0.0.1:{port} if internal only, or restrict via firewall."
-                        ),
+                        remediation=remediation,
                     )
                 )
 
@@ -764,22 +811,30 @@ class SystemScanner:
                     )
 
         # Inspect running containers without exposing their environment variables.
+        container_ports: dict[str, dict] = {}
         rc, out, _ = await self._run("docker", "ps", "--format", "{{.Names}}")
         if rc == 0:
             for container in out.strip().splitlines():
                 container = container.strip()
                 if not container:
                     continue
-                inspect_fmt = "{{json .HostConfig}}|||{{json .Mounts}}"
+                inspect_fmt = (
+                    "{{json .HostConfig}}|||{{json .Mounts}}|||"
+                    "{{json .NetworkSettings.Ports}}"
+                )
                 rc2, inspect_out, _ = await self._run(
                     "docker", "inspect", "--format", inspect_fmt, container
                 )
-                if rc2 != 0 or "|||" not in inspect_out:
+                if rc2 != 0 or inspect_out.count("|||") < 1:
                     continue
-                host_raw, mounts_raw = inspect_out.strip().split("|||", 1)
+                parts = inspect_out.strip().split("|||", 2)
+                host_raw = parts[0]
+                mounts_raw = parts[1]
+                ports_raw = parts[2] if len(parts) == 3 else "{}"
                 try:
                     host_config = json.loads(host_raw)
                     mounts = json.loads(mounts_raw)
+                    ports = json.loads(ports_raw) if ports_raw and ports_raw != "null" else {}
                 except json.JSONDecodeError as exc:
                     raise RuntimeError("docker_inspect_parse_failed") from exc
                 if not isinstance(host_config, dict) or not isinstance(mounts, list):
@@ -787,5 +842,100 @@ class SystemScanner:
                 findings.extend(
                     self._docker_container_findings(container, host_config, mounts)
                 )
+                if isinstance(ports, dict):
+                    container_ports[container] = ports
+
+        if container_ports and shutil.which("ufw"):
+            try:
+                rc_ufw, out_ufw, _ = await self._run("ufw", "status")
+            except RuntimeError:
+                rc_ufw, out_ufw = 1, ""
+            ufw_active = rc_ufw == 0 and "status: active" in out_ufw.lower()
+            if ufw_active:
+                docker_user_rules: str | None = None
+                if shutil.which("iptables"):
+                    try:
+                        rc_ipt, out_ipt, _ = await self._run("iptables", "-S", "DOCKER-USER")
+                        if rc_ipt == 0:
+                            docker_user_rules = out_ipt
+                    except RuntimeError:
+                        docker_user_rules = None
+                findings.extend(
+                    self._docker_ufw_bypass_findings(
+                        ufw_active=True,
+                        docker_user_rules=docker_user_rules,
+                        container_ports=container_ports,
+                    )
+                )
 
         return findings
+
+    def _docker_ufw_bypass_findings(
+        self,
+        *,
+        ufw_active: bool,
+        docker_user_rules: str | None,
+        container_ports: dict[str, dict],
+    ) -> list[Finding]:
+        """Detect Docker-published wildcard ports that bypass UFW INPUT rules."""
+        if not ufw_active:
+            return []
+
+        if docker_user_rules is not None:
+            # Presence of an explicit DROP/REJECT rule in DOCKER-USER indicates filtering.
+            for line in docker_user_rules.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("-A DOCKER-USER") and (
+                    "-j DROP" in stripped or "-j REJECT" in stripped
+                ):
+                    return []
+
+        exposed: list[str] = []
+        web_edge_ports = {"80", "443"}
+        for container, ports in sorted(container_ports.items()):
+            if not isinstance(ports, dict):
+                continue
+            for bindings in ports.values():
+                if not isinstance(bindings, list):
+                    continue
+                for binding in bindings:
+                    if not isinstance(binding, dict):
+                        continue
+                    host_ip = (binding.get("HostIp") or "").strip()
+                    host_port = str(binding.get("HostPort") or "").strip()
+                    if not host_port or host_port in web_edge_ports:
+                        continue
+                    if host_ip in ("", "0.0.0.0", "::"):
+                        exposed.append(f"{container}:{host_port}")
+
+        if not exposed:
+            return []
+
+        unique_exposed = sorted(set(exposed))
+        verify_note = (
+            "DOCKER-USER has no DROP/REJECT rule."
+            if docker_user_rules is not None
+            else "DOCKER-USER iptables chain could not be read (unverified)."
+        )
+        return [
+            Finding(
+                id="SYS-DOCKER-UFW-BYPASS",
+                scanner=self.name,
+                severity=Severity.CRITICAL,
+                title=(
+                    f"Docker publishes {len(unique_exposed)} non-web port(s) on 0.0.0.0/:: "
+                    "bypassing active UFW rules"
+                ),
+                description=(
+                    "UFW is active, but Docker inserts iptables NAT/FORWARD rules ahead of UFW "
+                    f"INPUT rules. {verify_note} Exposed container ports: "
+                    + ", ".join(unique_exposed[:12])
+                ),
+                affected=", ".join(unique_exposed[:12]),
+                remediation=(
+                    "Bind internal container ports to 127.0.0.1 (e.g. '127.0.0.1:5432:5432'), "
+                    "enforce inbound rules at your cloud provider firewall, or add explicit "
+                    "DOCKER-USER DROP rules."
+                ),
+            )
+        ]
