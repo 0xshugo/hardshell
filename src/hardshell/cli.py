@@ -21,6 +21,12 @@ app = typer.Typer(
     help="VPS security hardening tool — scan, enrich with CTI, prioritize, remediate.",
     no_args_is_help=True,
 )
+guard_app = typer.Typer(
+    name="guard",
+    help="Local AI agent runaway & cost circuit breaker and emergency kill switch.",
+    no_args_is_help=True,
+)
+app.add_typer(guard_app, name="guard")
 console = Console()
 
 
@@ -242,6 +248,98 @@ def posture_export_command(
         console.print(f"[green]Posture summary saved to {output}[/green]")
     else:
         typer.echo(rendered)
+
+
+def _default_guard_db(db: Path | None) -> Path:
+    if db is not None:
+        return db
+    import os
+
+    env_home = os.environ.get("HARDSHELL_HOME")
+    base = Path(env_home) if env_home else Path.cwd()
+    return base / "build" / "state" / "circuit-breaker.sqlite3"
+
+
+@guard_app.command(name="status")
+def guard_status_command(
+    agent: Annotated[str | None, typer.Option("--agent", help="Filter to one agent")] = None,
+    db: Annotated[Path | None, typer.Option("--db", help="Circuit breaker SQLite path")] = None,
+) -> None:
+    """Show local AI agent circuit-breaker states and spend totals."""
+    from hardshell.circuit_breaker import CircuitBreakerStore
+
+    store = CircuitBreakerStore(_default_guard_db(db))
+    typer.echo(json.dumps(store.status(agent), ensure_ascii=False, indent=2))
+
+
+@guard_app.command(name="check")
+def guard_check_command(
+    agent: Annotated[str, typer.Argument(help="Agent identifier (e.g. openclaw, n8n, hermes)")],
+    cost_usd: Annotated[str, typer.Option("--cost-usd", help="Estimated USD cost of call")] = "0",
+    action: Annotated[
+        str, typer.Option("--action", help="Action/tool signature hashed locally for loop checks")
+    ] = "",
+    daily_cap: Annotated[str, typer.Option("--daily-cap", help="Max daily USD spend")] = "5.00",
+    monthly_cap: Annotated[
+        str, typer.Option("--monthly-cap", help="Max monthly USD spend")
+    ] = "50.00",
+    rpm: Annotated[int, typer.Option("--rpm", help="Max requests per minute")] = 30,
+    db: Annotated[Path | None, typer.Option("--db", help="Circuit breaker SQLite path")] = None,
+) -> None:
+    """Evaluate local circuit breaker before an AI call (exit 0=allow, exit 4=blocked)."""
+    from hardshell.circuit_breaker import (
+        AgentGuardPolicy,
+        CircuitBreakerStore,
+        CircuitOpenError,
+        fingerprint_action,
+    )
+
+    policy = AgentGuardPolicy(
+        max_requests_per_minute=rpm,
+        max_daily_usd=daily_cap,
+        max_monthly_usd=monthly_cap,
+    )
+    store = CircuitBreakerStore(_default_guard_db(db), policies={agent: policy})
+    fp = fingerprint_action(action) if action else ""
+    try:
+        res = store.admit(agent, cost_usd=cost_usd, fingerprint=fp)
+        typer.echo(json.dumps({"allowed": True, **res}, ensure_ascii=False))
+    except CircuitOpenError as exc:
+        typer.echo(
+            json.dumps(
+                {"allowed": False, "agent": exc.agent, "code": exc.code, "detail": exc.detail},
+                ensure_ascii=False,
+            )
+        )
+        raise typer.Exit(4) from exc
+
+
+@guard_app.command(name="kill")
+def guard_kill_command(
+    agent: Annotated[str, typer.Argument(help="Agent identifier to kill immediately")],
+    reason: Annotated[str, typer.Option("--reason", help="Audit reason")] = "manual_kill_switch",
+    db: Annotated[Path | None, typer.Option("--db", help="Circuit breaker SQLite path")] = None,
+) -> None:
+    """Engage emergency local Kill Switch for an AI agent (never auto-resets)."""
+    from hardshell.circuit_breaker import CircuitBreakerStore
+
+    store = CircuitBreakerStore(_default_guard_db(db))
+    res = store.kill(agent, reason=reason)
+    typer.echo(json.dumps(res, ensure_ascii=False))
+
+
+@guard_app.command(name="reset")
+def guard_reset_command(
+    agent: Annotated[str, typer.Argument(help="Agent identifier to re-arm")],
+    reason: Annotated[str, typer.Option("--reason", help="Audit reason")] = "operator_reset",
+    db: Annotated[Path | None, typer.Option("--db", help="Circuit breaker SQLite path")] = None,
+) -> None:
+    """Explicitly re-arm a tripped or killed AI agent after operator investigation."""
+    from hardshell.circuit_breaker import CircuitBreakerStore
+
+    store = CircuitBreakerStore(_default_guard_db(db))
+    res = store.reset(agent, reason=reason)
+    typer.echo(json.dumps(res, ensure_ascii=False))
 
 
 @app.command(name="watch")
