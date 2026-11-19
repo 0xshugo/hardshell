@@ -173,6 +173,77 @@ def collect_hermes_registry_command(
     console.print(f"[green]Hermes registry saved to {output}[/green]")
 
 
+@app.command(name="posture-export")
+def posture_export_command(
+    scan_report: Annotated[
+        Path | None,
+        typer.Option("--scan-report", help="Path to hardshell scan JSON report"),
+    ] = None,
+    early_warning: Annotated[
+        Path | None,
+        typer.Option("--early-warning", help="Path to early-warning JSON report"),
+    ] = None,
+    remediation_dir: Annotated[
+        Path | None,
+        typer.Option("--remediation-dir", help="Directory containing remediation receipt JSONs"),
+    ] = None,
+    subject: Annotated[
+        str,
+        typer.Option("--subject", help="Public-safe subject label (avoid sensitive hostnames)"),
+    ] = "self-hosted-vps",
+    sign_key: Annotated[
+        Path | None,
+        typer.Option("--sign-key", help="Optional Ed25519 private key PEM file for signing"),
+    ] = None,
+    sign_key_id: Annotated[
+        str,
+        typer.Option("--sign-key-id", help="Key identifier embedded in signature envelope"),
+    ] = "",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Write posture JSON to file (default: stdout)"),
+    ] = None,
+) -> None:
+    """Export a secret-free, canonical-hashed (and optionally Ed25519-signed) posture summary."""
+    import os
+
+    from hardshell.posture_export import build_posture_summary
+
+    env_home = os.environ.get("HARDSHELL_HOME")
+    root = Path(env_home) if env_home else Path.cwd()
+    ew_path = early_warning if early_warning is not None else root / "build" / "early-warning.json"
+    rem_path = (
+        remediation_dir if remediation_dir is not None else root / "build" / "remediation"
+    )
+    if sign_key is not None and not sign_key_id:
+        console.print("[red]--sign-key-id is required when --sign-key is specified[/red]")
+        raise typer.Exit(2)
+
+    try:
+        envelope = build_posture_summary(
+            scan_report_path=scan_report,
+            early_warning_path=ew_path,
+            remediation_dir=rem_path,
+            subject_label=subject,
+            signing_key_path=sign_key,
+            signing_key_id=sign_key_id,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Posture export failed: {exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    rendered = json.dumps(envelope, ensure_ascii=False, indent=2)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temp = output.with_suffix(".tmp")
+        temp.write_text(rendered + "\n", encoding="utf-8")
+        temp.chmod(0o644)
+        temp.replace(output)
+        console.print(f"[green]Posture summary saved to {output}[/green]")
+    else:
+        typer.echo(rendered)
+
+
 @app.command(name="watch")
 def watch(
     inventory: Annotated[
