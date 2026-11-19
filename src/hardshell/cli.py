@@ -183,7 +183,7 @@ def watch(
         bool, typer.Option("--ai", help="Opt in to configured Jev/local LLM calls")
     ] = False,
 ) -> None:
-    """Fetch official PHP advisories and prepare approval-bound cases. Never remediate."""
+    """Fetch official PHP/nginx advisories and prepare approval-bound cases. Never remediate."""
     asyncio.run(_run_watch(inventory, output, ai))
 
 
@@ -192,21 +192,51 @@ async def _run_watch(inventory_path, output, ai):
     import time
     from datetime import UTC, datetime
 
-    from hardshell.early_warning import build_report, collect_php
-    from hardshell.intel.vendor import fetch_php
+    from hardshell.early_warning import build_report, collect_inventory
+    from hardshell.intel.vendor import fetch_nginx, fetch_php
 
     state = Path(__file__).resolve().parents[2] / "build" / "state"
+    advisories = []
+    gaps = []
+    source_requests = []
+    observed_stamps = []
     try:
-        intel = await fetch_php(cache_dir=state / "vendor")
+        php_intel = await fetch_php(cache_dir=state / "vendor")
+        for item in php_intel.get("advisories", []):
+            row = dict(item)
+            row["observed_at"] = php_intel.get("observed_at")
+            advisories.append(row)
+        gaps.extend(php_intel.get("gaps", []))
+        source_requests.extend(php_intel.get("source_requests", []))
+        if php_intel.get("observed_at"):
+            observed_stamps.append(php_intel["observed_at"])
     except Exception:
-        intel = {"advisories": [], "gaps": [{"source": "php.net", "reason": "acquisition_failed"}]}
+        gaps.append({"source": "php.net", "reason": "acquisition_failed"})
+    try:
+        nginx_intel = await fetch_nginx(cache_dir=state / "vendor")
+        for item in nginx_intel.get("advisories", []):
+            row = dict(item)
+            row["observed_at"] = nginx_intel.get("observed_at")
+            advisories.append(row)
+        gaps.extend(nginx_intel.get("gaps", []))
+        source_requests.extend(nginx_intel.get("source_requests", []))
+        if nginx_intel.get("observed_at"):
+            observed_stamps.append(nginx_intel["observed_at"])
+    except Exception:
+        gaps.append({"source": "nginx.org", "reason": "acquisition_failed"})
+    intel = {
+        "observed_at": min(observed_stamps) if observed_stamps else None,
+        "advisories": advisories,
+        "gaps": gaps,
+        "source_requests": source_requests,
+    }
     try:
         if inventory_path:
             if inventory_path.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError("inventory_too_large")
             inventory = json.loads(inventory_path.read_text())
         else:
-            inventory = await asyncio.to_thread(collect_php)
+            inventory = await asyncio.to_thread(collect_inventory)
         result = build_report(intel, inventory)
     except Exception:
         result = {
@@ -308,6 +338,20 @@ async def _run_watch(inventory_path, output, ai):
     console.print(
         f"Early warning: {len(result['cases'])} cases; {result['status']}; saved to {output}"
     )
+    try:
+        import socket
+
+        from hardshell.reporters.discord import notify_early_warning
+
+        alerted = await notify_early_warning(
+            result,
+            socket.gethostname(),
+            state_path=state / "early-warning-alerts.json",
+        )
+        if result.get("status") == "actionable" and not alerted:
+            console.print("[yellow]Discord HIGH notify failed or webhook unset[/yellow]")
+    except Exception:
+        console.print("[yellow]Discord HIGH notify skipped due to local error[/yellow]")
     if ai and any(v.get("status") != "ready" for v in result.get("ai_readiness", {}).values()):
         for provider, readiness in result["ai_readiness"].items():
             if readiness.get("status") != "ready":

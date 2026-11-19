@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hardshell.remediation_receipt.v1",
+  "title": "Hardshell remediation receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "advisory_id",
+    "asset_id",
+    "product",
+    "control_mode",
+    "status",
+    "approved_by",
+    "commands",
+    "before",
+    "after",
+    "verified_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "advisory_id": { "type": "string" },
+    "asset_id": { "type": "string" },
+    "product": { "type": "string" },
+    "control_mode": { "enum": ["recommend", "approve_then_apply"] },
+    "status": { "enum": ["pending_approval", "completed", "failed"] },
+    "approved_by": { "type": "string" },
+    "approved_at": { "type": ["string", "null"], "format": "date-time" },
+    "commands": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "before": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": { "type": "string" },
+        "image_ref": { "type": ["string", "null"] },
+        "image_digest": { "type": ["string", "null"] }
+      }
+    },
+    "after": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": { "type": "string" },
+        "image_ref": { "type": ["string", "null"] },
+        "image_digest": { "type": ["string", "null"] }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "nginx_v": { "type": "string" },
+        "http_probe": { "type": "string" }
+      }
+    },
+    "verified_at": { "type": "string", "format": "date-time" },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false
+}
