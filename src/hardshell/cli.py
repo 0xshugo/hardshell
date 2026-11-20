@@ -110,36 +110,181 @@ def notify(
     asyncio.run(_run_notify(report, prev, webhook, config))
 
 
+def _guardian_root() -> Path:
+    """Prefer HARDSHELL_HOME, then cwd with build/, then package checkout root."""
+    import os
+
+    env = os.environ.get("HARDSHELL_HOME")
+    if env:
+        return Path(env)
+    cwd = Path.cwd()
+    if (cwd / "build").is_dir() or (cwd / "pyproject.toml").exists():
+        return cwd
+    return Path(__file__).resolve().parents[2]
+
+
 @app.command()
 def status() -> None:
-    """Show available scanners and their status."""
+    """Show scanners, early-warning coverage, and latest remediation posture."""
     from hardshell.scanners import SCANNER_CLASSES
 
-    console.print(f"[bold]hardshell[/bold] v{__version__}\n")
+    root = _guardian_root()
+    console.print(f"[bold]hardshell[/bold] v{__version__}  ·  Solo VPS Guardian\n")
     console.print("[bold]Scanners:[/bold]")
     for name, cls in SCANNER_CLASSES.items():
         available = cls.is_available()
         icon = "[green]✓[/green]" if available else "[dim]✗[/dim]"
         console.print(f"  {icon} {name}")
-    report = Path(__file__).resolve().parents[2] / "build" / "early-warning.json"
-    console.print("\n[bold]Early warning / AI budget:[/bold]")
+    report = root / "build" / "early-warning.json"
+    console.print("\n[bold]Early warning:[/bold]")
     try:
         from datetime import UTC, datetime
 
         saved = json.loads(report.read_text())
         generated = datetime.fromisoformat(saved["generated_at"].replace("Z", "+00:00"))
         age = (datetime.now(UTC) - generated).total_seconds()
+        age_label = f"{int(age // 60)}m ago" if age >= 0 else "future"
+        status_value = saved.get("status", "unknown")
+        cases = saved.get("cases") or []
+        actionable = [c for c in cases if c.get("status") == "actionable"]
+        potential = [c for c in cases if c.get("status") == "potentially_affected"]
+        runtimes = saved.get("observed_runtimes") or []
+        by_product: dict[str, int] = {}
+        for asset in runtimes:
+            product = str(asset.get("product") or "unknown")
+            by_product[product] = by_product.get(product, 0) + 1
+        gaps = saved.get("coverage_gaps") or []
+        gap_reasons: dict[str, int] = {}
+        for gap in gaps:
+            reason = str(gap.get("reason") or "unknown")
+            gap_reasons[reason] = gap_reasons.get(reason, 0) + 1
+        console.print(f"  report: {status_value} · {age_label} · {report}")
         if not 0 <= age <= 45 * 60:
             console.print("  [red]stale: scheduled report needs attention[/red]")
+        console.print(
+            f"  cases: {len(cases)} total · actionable={len(actionable)} · "
+            f"potentially_affected={len(potential)} · runtimes={by_product or '{}'}"
+        )
+        if actionable:
+            for case in actionable[:5]:
+                console.print(
+                    f"  [red]HIGH[/red] `{case.get('advisory_id')}` "
+                    f"{case.get('product')} `{case.get('asset_id')}` "
+                    f"{case.get('installed')}→{case.get('fixed')}"
+                )
+            if len(actionable) > 5:
+                console.print(f"  … and {len(actionable) - 5} more actionable")
+        if potential:
+            seen_targets: set[tuple] = set()
+            shown = 0
+            for case in potential:
+                key = (
+                    case.get("product"),
+                    case.get("asset_id"),
+                    case.get("installed"),
+                    case.get("fixed"),
+                )
+                if key in seen_targets:
+                    continue
+                seen_targets.add(key)
+                console.print(
+                    f"  [yellow]REVIEW[/yellow] {case.get('product')} `{case.get('asset_id')}` "
+                    f"{case.get('installed')}→{case.get('fixed')}"
+                )
+                shown += 1
+                if shown >= 5:
+                    break
+        console.print(
+            "  coverage_gaps: "
+            + (
+                ", ".join(f"{k}={v}" for k, v in sorted(gap_reasons.items()))
+                if gap_reasons
+                else "none"
+            )
+        )
+        feed_gaps = saved.get("feed_gaps") or []
+        if feed_gaps:
+            feed_reasons: dict[str, int] = {}
+            for fg in feed_gaps:
+                fr = str((fg or {}).get("reason") or "unknown")
+                feed_reasons[fr] = feed_reasons.get(fr, 0) + 1
+            console.print(
+                "  [red]feed_gaps[/red]: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(feed_reasons.items()))
+            )
+        notification = saved.get("notification")
+        if isinstance(notification, dict):
+            n_status = str(notification.get("status") or "unknown")
+            failures = int(notification.get("consecutive_failures") or 0)
+            if n_status in {"failed", "skipped_unconfigured"} or failures > 0:
+                console.print(
+                    f"  [red]discord[/red]: {n_status} (failures={failures}, "
+                    f"err={notification.get('last_error')})"
+                )
+            else:
+                console.print(f"  discord: {n_status}")
         for provider, readiness in saved.get("ai_readiness", {}).items():
             console.print(
-                f"  {provider}: {readiness.get('status', 'unknown')} "
+                f"  ai/{provider}: {readiness.get('status', 'unknown')} "
                 f"({readiness.get('reason', 'funding observed; see checked_at')})"
             )
         if not saved.get("ai_readiness"):
-            console.print("  [yellow]AI funding not verified[/yellow]")
+            console.print("  ai: not used on last watch (AI-less or unset)")
     except (OSError, ValueError, KeyError, TypeError):
         console.print("  [yellow]unverified: no valid scheduled report[/yellow]")
+
+    rem_dir = root / "build" / "remediation"
+    console.print("\n[bold]Remediation:[/bold]")
+    try:
+        receipts = sorted(rem_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not receipts:
+            console.print("  none yet (approve_then_apply receipts land here)")
+        else:
+            latest = json.loads(receipts[0].read_text())
+            console.print(
+                f"  last: {receipts[0].name} · status={latest.get('status')} · "
+                f"{latest.get('advisory_id')} `{latest.get('asset_id')}`"
+            )
+            console.print(f"  control_mode={latest.get('control_mode')} · total={len(receipts)}")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        console.print("  [yellow]unverified remediation directory[/yellow]")
+
+
+@app.command(name="ops-check")
+def ops_check(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable operational health JSON")
+    ] = False,
+    no_systemd: Annotated[
+        bool, typer.Option("--no-systemd", help="Skip systemd timer/service checks")
+    ] = False,
+) -> None:
+    """Verify Hardshell operational health and Discord alert delivery."""
+    from hardshell.ops_health import evaluate_ops_health
+
+    report = evaluate_ops_health(_guardian_root(), check_systemd=not no_systemd)
+    if json_output:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"[bold]hardshell ops-check[/bold] · overall=[bold]{report['overall_status']}[/bold]"
+        )
+        for name, check in report["checks"].items():
+            st = check.get("status", "unknown")
+            color = "green" if st == "ok" else ("yellow" if st in {"warn", "skipped"} else "red")
+            detail = (
+                check.get("reason")
+                or check.get("delivery_status")
+                or check.get("report_status")
+                or ""
+            )
+            console.print(f"  [{color}]{st}[/{color}] {name}: {detail}")
+        if report["follow_up_actions"]:
+            console.print("\n[bold]Follow-up actions:[/bold]")
+            for action in report["follow_up_actions"]:
+                console.print(f"  • {action}")
+    if report["follow_up_needed"]:
+        raise typer.Exit(2)
 
 
 @app.command(name="config")
@@ -352,7 +497,7 @@ def watch(
         bool, typer.Option("--ai", help="Opt in to configured Jev/local LLM calls")
     ] = False,
 ) -> None:
-    """Fetch official PHP advisories and prepare approval-bound cases. Never remediate."""
+    """Fetch official PHP/nginx advisories and prepare approval-bound cases. Never remediate."""
     asyncio.run(_run_watch(inventory, output, ai))
 
 
@@ -361,21 +506,51 @@ async def _run_watch(inventory_path, output, ai):
     import time
     from datetime import UTC, datetime
 
-    from hardshell.early_warning import build_report, collect_php
-    from hardshell.intel.vendor import fetch_php
+    from hardshell.early_warning import build_report, collect_inventory
+    from hardshell.intel.vendor import fetch_nginx, fetch_php
 
-    state = Path(__file__).resolve().parents[2] / "build" / "state"
+    state = _guardian_root() / "build" / "state"
+    advisories = []
+    gaps = []
+    source_requests = []
+    observed_stamps = []
     try:
-        intel = await fetch_php(cache_dir=state / "vendor")
+        php_intel = await fetch_php(cache_dir=state / "vendor")
+        for item in php_intel.get("advisories", []):
+            row = dict(item)
+            row["observed_at"] = php_intel.get("observed_at")
+            advisories.append(row)
+        gaps.extend(php_intel.get("gaps", []))
+        source_requests.extend(php_intel.get("source_requests", []))
+        if php_intel.get("observed_at"):
+            observed_stamps.append(php_intel["observed_at"])
     except Exception:
-        intel = {"advisories": [], "gaps": [{"source": "php.net", "reason": "acquisition_failed"}]}
+        gaps.append({"source": "php.net", "reason": "acquisition_failed"})
+    try:
+        nginx_intel = await fetch_nginx(cache_dir=state / "vendor")
+        for item in nginx_intel.get("advisories", []):
+            row = dict(item)
+            row["observed_at"] = nginx_intel.get("observed_at")
+            advisories.append(row)
+        gaps.extend(nginx_intel.get("gaps", []))
+        source_requests.extend(nginx_intel.get("source_requests", []))
+        if nginx_intel.get("observed_at"):
+            observed_stamps.append(nginx_intel["observed_at"])
+    except Exception:
+        gaps.append({"source": "nginx.org", "reason": "acquisition_failed"})
+    intel = {
+        "observed_at": min(observed_stamps) if observed_stamps else None,
+        "advisories": advisories,
+        "gaps": gaps,
+        "source_requests": source_requests,
+    }
     try:
         if inventory_path:
             if inventory_path.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError("inventory_too_large")
             inventory = json.loads(inventory_path.read_text())
         else:
-            inventory = await asyncio.to_thread(collect_php)
+            inventory = await asyncio.to_thread(collect_inventory)
         result = build_report(intel, inventory)
     except Exception:
         result = {
@@ -469,6 +644,27 @@ async def _run_watch(inventory_path, output, ai):
                     current["budget"] = capacity
         except (BudgetDeniedError, OSError):
             result["ai_budget_usage"] = {"error": "budget_store_unavailable"}
+    try:
+        import socket
+
+        from hardshell.reporters.discord import deliver_early_warning
+
+        delivery = await deliver_early_warning(
+            result,
+            socket.gethostname(),
+            state_path=state / "early-warning-alerts.json",
+        )
+        result["notification"] = {k: v for k, v in delivery.items() if k != "ok"}
+        if result.get("status") == "actionable" and not delivery.get("ok"):
+            console.print("[yellow]Discord HIGH notify failed or webhook unset[/yellow]")
+    except Exception:
+        result["notification"] = {
+            "channel": "discord",
+            "status": "failed",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "last_error": "local_notify_error",
+        }
+        console.print("[yellow]Discord HIGH notify skipped due to local error[/yellow]")
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(".tmp")
     temp.write_text(json.dumps(result, ensure_ascii=False, indent=2))

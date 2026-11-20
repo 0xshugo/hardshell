@@ -315,3 +315,25 @@ async def test_full_php_fetch_reuses_cache_without_extra_network_requests(tmp_pa
     assert one["observed_at"] == two["observed_at"]
     assert seen == ["/releases/feed.php", "/feed.atom"]
     assert all(item["mode"] == "cached" for item in two["source_requests"])
+
+
+@pytest.mark.asyncio
+async def test_legacy_long_next_at_is_capped_by_feed_interval(tmp_path):
+    at = [clock()]
+    seen = []
+
+    def handle(request):
+        seen.append(request.url.path)
+        return httpx.Response(200, text="advisories")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        source = PoliteSource(client, tmp_path, clock=lambda: at[0], jitter=lambda: 0)
+        url = "https://nginx.org/en/security_advisories.html"
+        assert await source.text(url) == "advisories"
+        # Simulate an older schema/policy that wrote next_at = verified + 86400
+        with source.connect() as db:
+            db.execute("UPDATE urls SET next_at=? WHERE url=?", (at[0] + 86400, url))
+        at[0] += 3601
+        assert await source.text(url) == "advisories"
+    assert len(seen) == 2
+

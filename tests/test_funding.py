@@ -145,7 +145,9 @@ def test_watch_writes_budget_failure_and_keeps_detection_report(tmp_path, monkey
         return {"advisories": [], "gaps": []}
 
     monkeypatch.setattr(vendor, "fetch_php", intel)
-    monkeypatch.setattr(warning, "collect_php", lambda: {"runtimes": [], "gaps": []})
+    monkeypatch.setattr(vendor, "fetch_nginx", intel)
+    monkeypatch.setattr(warning, "collect_inventory", lambda: {"assets": [], "gaps": []})
+    monkeypatch.setattr(warning, "collect_php", lambda: {"assets": [], "gaps": []})
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     output = tmp_path / "report.json"
     result = CliRunner().invoke(app, ["watch", "--ai", "-o", str(output)])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -56,10 +57,12 @@ class PoliteSource:
 
     def admit(self, url):
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.netloc != "www.php.net":
+        if parsed.scheme != "https" or parsed.netloc not in {"www.php.net", "nginx.org"}:
             raise ValueError("unapproved_source")
         origin, now = parsed.netloc, self.clock()
-        interval = 3600 if parsed.path in ("/feed.atom", "/releases/feed.php") else 86400
+        feed_paths = {"/feed.atom", "/releases/feed.php", "/en/security_advisories.html"}
+        is_changelog = bool(re.fullmatch(r"/ChangeLog-\d+\.php", parsed.path))
+        interval = 3600 if (parsed.path in feed_paths or is_changelog) else 86400
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM urls WHERE url=?", (url,)).fetchone()
@@ -68,7 +71,15 @@ class PoliteSource:
                 if row and row["body"] is not None:
                     return {**dict(row), "deferred_reason": "origin_blocked_or_cooling_down"}, False
                 raise SourceDeferredError("origin_blocked_or_cooling_down")
-            if row and row["next_at"] > now:
+            effective_next = row["next_at"] if row else 0
+            if (
+                row
+                and not row["failures"]
+                and row["verified"] is not None
+                and effective_next > row["verified"] + interval + 600
+            ):
+                effective_next = row["verified"] + interval
+            if row and effective_next > now:
                 if row["body"] is not None:
                     return {
                         **dict(row),
@@ -200,7 +211,8 @@ class PoliteSource:
             o["verified"]
             for o in self.observations
             if o["verified"] is not None
-            and urlparse(o["url"]).path in ("/feed.atom", "/releases/feed.php")
+            and urlparse(o["url"]).path
+            in ("/feed.atom", "/releases/feed.php", "/en/security_advisories.html")
         ]
         return datetime.fromtimestamp(min(stamps), UTC).isoformat() if stamps else None
 

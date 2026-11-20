@@ -183,9 +183,9 @@ MIT
 
 ## 公式速報からの早期確認（改修候補）
 
-`hardshell watch` はPHP公式のリリース配信とニュース配信を直接読み、
-実稼働のPHP版と照合して承認待ちの候補を保存します。重大な公開予告はCVE番号がなくても候補化します。
-現在の対象はPHPです。他の製品を公式速報で網羅しているとは扱いません。
+`hardshell watch` はPHP公式のリリース/ニュース配信と nginx.org の security advisories を直接読み、
+実稼働のPHP/nginx版と照合して承認待ちの候補を保存します。PHPの重大な公開予告はCVE番号がなくても候補化します。
+現在の対象はPHPとnginxです。他の製品を公式速報で網羅しているとは扱いません。
 
 ```sh
 hardshell watch -o build/early-warning.json
@@ -193,16 +193,39 @@ hardshell watch -o build/early-warning.json
 hardshell watch --inventory build/runtime-inventory.json -o build/early-warning.json
 ```
 
-このコマンドは更新・再起動・外部通知を実行しません。コンテナの名前とイメージID、
-`php -n -r 'echo PHP_VERSION;'` の出力だけを照会し、Envやラベルは取り込みません。
-PHPがPATHにないコンテナ、ホスト側や埋込みランタイムは未確認として残ります。
+このコマンドは更新・再起動・修復を実行しません。コンテナの名前とイメージID、
+`php -n -r 'echo PHP_VERSION;'` と `nginx -v`、公開80/443の有無だけを照会し、Envやラベルは取り込みません。
+PHPがPATHにないコンテナ、nginxバイナリを確認できないnginx系イメージ、ホスト側や埋込みランタイムは未確認として残ります。
 公式の版比較だけでは配布元のバックポートやWeb経路を確定できないため、
-`potentially_affected` / `needs_evidence` を使い、`affected` やサーバ全体の保護完了を断定しません。
+`actionable` / `potentially_affected` / `needs_evidence` を使い、サーバ全体の保護完了を断定しません。
+公開リスナ上の重大度の高いnginx該当は `actionable` になります。
+`DISCORD_WEBHOOK_URL` または `HARDSHELL_STATUS_WEBHOOK_URL` があるときだけ、新規 `actionable` を Discord HIGH として通知します（case_id で重複抑制）。
 候補IDは資産・イメージ・導入版・アドバイザリに紐づきます。
 
-`operations/systemd/` はローカル確認15分間隔です。PHPへの外部取得は各URLで最低1時間空けます。
-提供ユニットは `--ai` を使いますが、有効なローカル予算と提供元の実残高確認がなければ推論しません。通知は無効です。
+`operations/systemd/` はローカル確認15分間隔です。PHP/nginx への外部取得は各URLで最低1時間空けます。
+提供ユニットは `--ai` を使いますが、本番 drop-in で AI-less 運用できます。Typesafe 未整備時はルールベース通知のみです。
 日次フルスキャンを置き換えるものではありません。
+
+### Solo VPS Guardian（この VPS の運用面）
+
+ランタイム境界: [`docs/ops/vps-guardian-runtime.md`](docs/ops/vps-guardian-runtime.md)
+
+| 資産 | パス |
+|---|---|
+| 本番 Core | `/home/shugo/hardshell` |
+| 本 Workspace | `/var/lib/orca-control/workspaces/hardshell-security` |
+| secfeed | `/home/shugo/services/secfeed`, `secfeed-autonomous` |
+| 公開エッジ | aoi-system `factory-nginx` |
+| nginx 修復プレイブック | `operations/playbooks/nginx-upgrade.md` |
+| 週次運用 | `docs/ops/weekly-ops.md` |
+| 本番反映 | `bin/deploy-production.sh`（**shugo** / docker fallback） |
+
+導線: `install → timer → hardshell watch → Discord HIGH → approve_then_apply → receipt`。
+
+```bash
+hardshell status   # scanners + actionable + coverage_gaps + last remediation
+hardshell watch -o build/early-warning.json
+```
 
 ### JevとローカルLLMの助言
 

@@ -1,0 +1,10 @@
+# Install as /etc/systemd/system/hardshell-watch.service.d/20-discord.conf
+# Prefer a dedicated env file with ONLY Discord webhook keys (mode 600, owner shugo):
+#   /home/shugo/hardshell/build/state/discord.env
+# Extract from ~/.env without loading unrelated secrets:
+#   grep -E '^(DISCORD_WEBHOOK_URL|HARDSHELL_STATUS_WEBHOOK_URL)=' ~/.env \
+#     > /home/shugo/hardshell/build/state/discord.env
+#   chmod 600 /home/shugo/hardshell/build/state/discord.env
+# Then: systemctl daemon-reload && systemctl start hardshell-watch.service
+[Service]
+EnvironmentFile=-/home/shugo/hardshell/build/state/discord.env

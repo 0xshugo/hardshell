@@ -145,6 +145,10 @@ if [[ ! -s "$SCAN_OUTPUT" ]]; then
   exit "$SCAN_RC"
 fi
 mv "$SCAN_OUTPUT" "$OUTFILE"
+if [[ "${EUID:-$(id -u)}" -eq 0 && -n "$HARDSHELL_USER" && "$HARDSHELL_USER" != "root" ]]; then
+  chown "$HARDSHELL_USER:" "$OUTFILE" 2>/dev/null || true
+fi
+chmod 0640 "$OUTFILE" 2>/dev/null || true
 
 # 直前のレポート (今回生成分を除く) を特定して差分通知に使用
 PREV_REPORT=$(ls -t "$REPORT_DIR"/${MODE}-*.json 2>/dev/null | grep -v "$OUTFILE" | head -1 || true)
