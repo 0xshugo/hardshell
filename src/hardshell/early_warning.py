@@ -65,15 +65,17 @@ def _looks_like_nginx(image_ref: str) -> bool:
     return bool(re.search(r"(^|/)nginx([:]|$)", ref) or "nginx" in ref.split("/")[-1])
 
 
-def _probe_nginx_container(name: str):
-    image = _docker_image_id(name)
-    image_ref = _docker_image_ref(name)
+def _probe_nginx_container(
+    name: str, *, image: str | None = None, image_ref: str | None = None
+):
+    image = image if image is not None else _docker_image_id(name)
+    image_ref = image_ref if image_ref is not None else _docker_image_ref(name)
     try:
         run = subprocess.run(
             ["docker", "exec", name, "nginx", "-v"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         current = _docker_image_id(name)
         if current != image:
@@ -96,27 +98,31 @@ def _probe_nginx_container(name: str):
         return None, {"asset_id": name, "reason": "runtime_probe_timeout"}
 
 
-def _probe_php_container(name: str):
-    image = _docker_image_id(name)
+def _probe_php_container(
+    name: str, *, image: str | None = None, image_ref: str | None = None
+):
+    image = image if image is not None else _docker_image_id(name)
     try:
         # -n skips application php.ini and auto_prepend_file. No shell, env, labels or network.
         run = subprocess.run(
             ["docker", "exec", name, "php", "-n", "-r", "echo PHP_VERSION;"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         version = run.stdout.strip()
         current = _docker_image_id(name)
         if current != image:
             return None, {"asset_id": name, "reason": "image_changed"}
         if run.returncode == 0 and VERSION.fullmatch(version):
+            resolved_ref = image_ref if image_ref is not None else _docker_image_ref(name)
             return {
                 "asset_id": name,
                 "product": "php",
                 "version": version,
                 "image_digest": image,
-                "exposure": "unknown",
+                "image_ref": resolved_ref,
+                "exposure": _public_http_exposure(name),
                 "observed_at": datetime.now(UTC).isoformat(),
             }, None
         # Absence from PATH does not prove that no embedded PHP runtime exists.
@@ -126,17 +132,28 @@ def _probe_php_container(name: str):
 
 
 def _probe_container(name: str):
-    nginx_asset, nginx_gap = _probe_nginx_container(name)
+    image = _docker_image_id(name)
+    image_ref = _docker_image_ref(name)
+    assets = []
+    gaps = []
+    nginx_asset, nginx_gap = _probe_nginx_container(name, image=image, image_ref=image_ref)
     if nginx_asset is not None:
-        return nginx_asset, nginx_gap
-    if nginx_gap is not None and nginx_gap.get("reason") in {
+        assets.append(nginx_asset)
+    elif nginx_gap is not None and nginx_gap.get("reason") in {
         "image_changed",
         "runtime_probe_timeout",
         "nginx_runtime_unverified",
     }:
         # Known nginx-shaped asset or probe failure: do not also emit php_runtime_unverified.
-        return None, nginx_gap
-    return _probe_php_container(name)
+        return [], [nginx_gap]
+    php_asset, php_gap = _probe_php_container(name, image=image, image_ref=image_ref)
+    if php_asset is not None:
+        assets.append(php_asset)
+    elif php_gap is not None and (
+        not assets or php_gap.get("reason") != "php_runtime_unverified"
+    ):
+        gaps.append(php_gap)
+    return assets, gaps
 
 
 def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
@@ -160,16 +177,14 @@ def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
                 gaps.append({"reason": "runtime_collection_budget_exceeded"})
                 break
             try:
-                asset, gap = fut.result(timeout=remaining)
+                found_assets, found_gaps = fut.result(timeout=remaining)
             except TimeoutError:
                 for pending in futures[idx:]:
                     pending.cancel()
                 gaps.append({"reason": "runtime_collection_budget_exceeded"})
                 break
-            if asset is not None:
-                assets.append(asset)
-            if gap is not None:
-                gaps.append(gap)
+            assets.extend(found_assets)
+            gaps.extend(found_gaps)
     return {
         "observed_at": datetime.now(UTC).isoformat(),
         "assets": assets,
@@ -197,6 +212,7 @@ def fresh(value, now, *, maximum_age=timedelta(minutes=45)):
 def _php_cases(asset, advisories, now):
     cases = []
     version = asset.get("version", "")
+    exposure = asset.get("exposure", "unknown")
     for advisory in advisories:
         if advisory.get("product") != "php":
             continue
@@ -218,36 +234,47 @@ def _php_cases(asset, advisories, now):
                 continue
         else:
             threshold = None
+        if valid and threshold and exposure == "public":
+            status = "actionable"
+            reason = "upstream_version_match; public_http_listener; vendor_backport_unverified"
+        elif valid and threshold:
+            status = "potentially_affected"
+            reason = "upstream_version_match; vendor_backport_and_web_exposure_unverified"
+        else:
+            status = "needs_evidence"
+            reason = "upstream_version_match; vendor_backport_and_web_exposure_unverified"
         case_id = hashlib.sha256(
             json.dumps(
                 [asset["asset_id"], asset.get("image_digest"), version, advisory["id"]],
                 sort_keys=True,
             ).encode()
         ).hexdigest()
-        cases.append(
-            {
-                "case_id": case_id,
-                "advisory_id": advisory["id"],
-                "asset_id": asset["asset_id"],
-                "product": "php",
-                "installed": version,
-                "image_digest": asset.get("image_digest"),
-                "fixed": threshold,
-                "status": "potentially_affected" if valid and threshold else "needs_evidence",
-                "priority": "P1",
-                "references": advisory["references"],
-                "public_summary": advisory.get("public_summary", ""),
-                "reason": "upstream_version_match; vendor_backport_and_web_exposure_unverified",
-                "next_steps": [
-                    "verify_vendor_patch",
-                    "prepare_image_update",
-                    "request_service_approval",
-                    "verify_runtime_after_update",
-                ],
-                "requires_approval": True,
-                "executable": False,
-            }
-        )
+        case = {
+            "case_id": case_id,
+            "advisory_id": advisory["id"],
+            "asset_id": asset["asset_id"],
+            "product": "php",
+            "installed": version,
+            "image_digest": asset.get("image_digest"),
+            "exposure": exposure,
+            "fixed": threshold,
+            "status": status,
+            "priority": "P1",
+            "references": advisory["references"],
+            "public_summary": advisory.get("public_summary", ""),
+            "reason": reason,
+            "next_steps": [
+                "verify_vendor_patch",
+                "prepare_image_update",
+                "request_service_approval",
+                "verify_runtime_after_update",
+            ],
+            "requires_approval": True,
+            "executable": False,
+        }
+        if asset.get("image_ref"):
+            case["image_ref"] = asset["image_ref"]
+        cases.append(case)
     return cases
 
 

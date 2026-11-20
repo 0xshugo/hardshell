@@ -411,3 +411,184 @@ async def test_fetch_nginx_parses_official_advisory_page():
     assert feed["advisories"][0]["id"] == "CVE-2026-123007"
     assert feed["advisories"][0]["fixed_versions"] == ["1.31.9", "1.30.7"]
     assert feed["advisories"][0]["severity"] == "major"
+
+
+@pytest.mark.asyncio
+async def test_fetch_php_resolves_changelog_cves_within_budget_and_supersedes_notice(tmp_path):
+    feed = """<feed xmlns="http://www.w3.org/2005/Atom" xmlns:php="http://php.net/ns/releases">
+    <entry><php:version>8.5.13</php:version><php:tag>security</php:tag>
+    <published>2026-11-19T00:00:00Z</published></entry>
+    <entry><php:version>8.4.28</php:version><php:tag>security</php:tag>
+    <published>2026-11-19T00:00:00Z</published></entry>
+    <entry><php:version>8.3.37</php:version><php:tag>security</php:tag>
+    <published>2026-11-19T00:00:00Z</published></entry>
+    </feed>"""
+    atom = """<feed xmlns="http://www.w3.org/2005/Atom">
+    <entry>
+      <title>PHP 8.5.13 Released!</title>
+      <id>https://www.php.net/archive/2026.php#2026-11-19-4</id>
+      <published>2026-11-19T14:00:00+00:00</published>
+      <content>Security release. Details in the ChangeLog.</content>
+    </entry>
+    <entry>
+      <title>PHP 8.4.28 Released!</title>
+      <id>https://www.php.net/archive/2026.php#2026-11-19-3</id>
+      <published>2026-11-19T14:00:00+00:00</published>
+      <content>Security release. Details in the ChangeLog.</content>
+    </entry>
+    <entry>
+      <title>PHP 8.3.37 Released!</title>
+      <id>https://www.php.net/archive/2026.php#2026-11-19-2</id>
+      <published>2026-11-19T14:00:00+00:00</published>
+      <content>Security release. Details in the ChangeLog.</content>
+    </entry>
+    <entry>
+      <title>Upcoming Critical PHP Security Release</title>
+      <id>https://www.php.net/archive/2026.php#2026-11-18-1</id>
+      <published>2026-11-18T17:09:51+00:00</published>
+    </entry>
+    </feed>"""
+    changelog = """<!DOCTYPE html><html><body>
+    <section class="version" id="8.5.13"><h3>Version 8.5.13</h3>
+      <ul><li>Fixed GHSA-gr4f-wgx5-jpfv (RCE). (CVE-2026-129496)</li></ul>
+    </section>
+    <section class="version" id="8.4.28"><h3>Version 8.4.28</h3>
+      <ul>
+        <li>Fixed GHSA-gr4f-wgx5-jpfv (RCE). (CVE-2026-129496)</li>
+        <li>Fixed GHSA-4646-p932-gw34 (SOAP DTD entity references UAF). (CVE-2026-129506)</li>
+      </ul>
+    </section>
+    <section class="version" id="8.3.37"><h3>Version 8.3.37</h3>
+      <ul><li>Fixed GHSA-gr4f-wgx5-jpfv (RCE). (CVE-2026-129496)</li></ul>
+    </section>
+    </body></html>"""
+    seen = []
+
+    def handle(request):
+        seen.append(request.url.path)
+        if request.url.path == "/releases/feed.php":
+            return httpx.Response(200, text=feed)
+        if request.url.path == "/feed.atom":
+            return httpx.Response(200, text=atom)
+        if request.url.path == "/ChangeLog-8.php":
+            return httpx.Response(200, text=changelog)
+        raise AssertionError(f"Unexpected fetch: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        res = await fetch_php(client, cache_dir=tmp_path)
+
+    assert seen == ["/releases/feed.php", "/feed.atom", "/ChangeLog-8.php"]
+    assert res["gaps"] == []
+    by_id = {a["id"]: a for a in res["advisories"]}
+    assert "PHP-NOTICE-2026-11-18" not in by_id
+    assert by_id["CVE-2026-129496"]["fixed_versions"] == ["8.5.13", "8.4.28", "8.3.37"]
+    assert by_id["CVE-2026-129506"]["fixed_versions"] == ["8.4.28"]
+
+
+def test_public_php_container_is_actionable_and_local_is_potentially_affected():
+    inv = {
+        "assets": [
+            {
+                "asset_id": "freshrss",
+                "product": "php",
+                "version": "8.4.27",
+                "image_digest": "sha256:" + "a" * 64,
+                "image_ref": "freshrss/freshrss:1.30.3",
+                "exposure": "public",
+                "observed_at": NOW.isoformat(),
+            },
+            {
+                "asset_id": "coolify",
+                "product": "php",
+                "version": "8.4.27",
+                "image_digest": "sha256:" + "b" * 64,
+                "image_ref": "coollabsio/coolify:4.7.5",
+                "exposure": "local",
+                "observed_at": NOW.isoformat(),
+            },
+        ]
+    }
+    adv = {
+        "observed_at": NOW.isoformat(),
+        "advisories": [
+            {
+                "id": "CVE-2026-129496",
+                "product": "php",
+                "fixed_versions": ["8.4.28"],
+                "references": ["https://www.php.net/ChangeLog-8.php#8.4.28"],
+                "public_summary": "Timezone cache UAF",
+            }
+        ],
+    }
+    report = build_report(adv, inv, NOW)
+    assert report["status"] == "actionable"
+    by_asset = {c["asset_id"]: c for c in report["cases"]}
+    assert by_asset["freshrss"]["status"] == "actionable"
+    assert by_asset["freshrss"]["fixed"] == "8.4.28"
+    assert by_asset["coolify"]["status"] == "potentially_affected"
+    assert by_asset["coolify"]["fixed"] == "8.4.28"
+
+
+def test_collect_inventory_captures_php_exposure_and_image_ref(monkeypatch):
+    import subprocess
+
+    from hardshell.early_warning import collect_inventory
+
+    def fake_check_output(cmd, **_kw):
+        if cmd[:2] == ["docker", "ps"]:
+            return "freshrss\n"
+        if cmd[:2] == ["docker", "inspect"]:
+            fmt = cmd[cmd.index("--format") + 1]
+            if "Config.Image" in fmt:
+                return "freshrss/freshrss:1.30.3\n"
+            if "NetworkSettings.Ports" in fmt:
+                return json.dumps({"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8081"}]}) + "\n"
+            return "sha256:" + "e" * 64 + "\n"
+        raise AssertionError(cmd)
+
+    def fake_run(cmd, **_kw):
+        if cmd[3] == "nginx":
+            return subprocess.CompletedProcess(cmd, 127, "", "not found")
+        return subprocess.CompletedProcess(cmd, 0, "8.4.27\n", "")
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    inv = collect_inventory(budget_seconds=10.0, max_workers=1)
+    assert len(inv["assets"]) == 1
+    assert inv["assets"][0]["product"] == "php"
+    assert inv["assets"][0]["exposure"] == "public"
+    assert inv["assets"][0]["image_ref"] == "freshrss/freshrss:1.30.3"
+
+
+def test_collect_inventory_records_both_nginx_and_php_for_dual_runtime_container(monkeypatch):
+    import subprocess
+
+    from hardshell.early_warning import collect_inventory
+
+    def fake_check_output(cmd, **_kw):
+        if cmd[:2] == ["docker", "ps"]:
+            return "coolify\n"
+        if cmd[:2] == ["docker", "inspect"]:
+            fmt = cmd[cmd.index("--format") + 1]
+            if "Config.Image" in fmt:
+                return "coollabsio/coolify:4.7.5\n"
+            if "NetworkSettings.Ports" in fmt:
+                return "{}\n"
+            return "sha256:" + "f" * 64 + "\n"
+        raise AssertionError(cmd)
+
+    def fake_run(cmd, **_kw):
+        if cmd[3] == "nginx":
+            return subprocess.CompletedProcess(cmd, 0, "", "nginx version: nginx/1.31.9\n")
+        return subprocess.CompletedProcess(cmd, 0, "8.4.27\n", "")
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    inv = collect_inventory(budget_seconds=10.0, max_workers=1)
+    assert [(a["asset_id"], a["product"], a["version"]) for a in inv["assets"]] == [
+        ("coolify", "nginx", "1.31.9"),
+        ("coolify", "php", "8.4.27"),
+    ]
+    assert inv["gaps"] == []
+
+

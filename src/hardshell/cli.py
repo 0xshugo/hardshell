@@ -147,6 +147,7 @@ def status() -> None:
         status_value = saved.get("status", "unknown")
         cases = saved.get("cases") or []
         actionable = [c for c in cases if c.get("status") == "actionable"]
+        potential = [c for c in cases if c.get("status") == "potentially_affected"]
         runtimes = saved.get("observed_runtimes") or []
         by_product: dict[str, int] = {}
         for asset in runtimes:
@@ -162,7 +163,7 @@ def status() -> None:
             console.print("  [red]stale: scheduled report needs attention[/red]")
         console.print(
             f"  cases: {len(cases)} total · actionable={len(actionable)} · "
-            f"runtimes={by_product or '{}'}"
+            f"potentially_affected={len(potential)} · runtimes={by_product or '{}'}"
         )
         if actionable:
             for case in actionable[:5]:
@@ -173,6 +174,26 @@ def status() -> None:
                 )
             if len(actionable) > 5:
                 console.print(f"  … and {len(actionable) - 5} more actionable")
+        if potential:
+            seen_targets: set[tuple] = set()
+            shown = 0
+            for case in potential:
+                key = (
+                    case.get("product"),
+                    case.get("asset_id"),
+                    case.get("installed"),
+                    case.get("fixed"),
+                )
+                if key in seen_targets:
+                    continue
+                seen_targets.add(key)
+                console.print(
+                    f"  [yellow]REVIEW[/yellow] {case.get('product')} `{case.get('asset_id')}` "
+                    f"{case.get('installed')}→{case.get('fixed')}"
+                )
+                shown += 1
+                if shown >= 5:
+                    break
         console.print(
             "  coverage_gaps: "
             + (
@@ -183,7 +204,25 @@ def status() -> None:
         )
         feed_gaps = saved.get("feed_gaps") or []
         if feed_gaps:
-            console.print(f"  feed_gaps: {len(feed_gaps)}")
+            feed_reasons: dict[str, int] = {}
+            for fg in feed_gaps:
+                fr = str((fg or {}).get("reason") or "unknown")
+                feed_reasons[fr] = feed_reasons.get(fr, 0) + 1
+            console.print(
+                "  [red]feed_gaps[/red]: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(feed_reasons.items()))
+            )
+        notification = saved.get("notification")
+        if isinstance(notification, dict):
+            n_status = str(notification.get("status") or "unknown")
+            failures = int(notification.get("consecutive_failures") or 0)
+            if n_status in {"failed", "skipped_unconfigured"} or failures > 0:
+                console.print(
+                    f"  [red]discord[/red]: {n_status} (failures={failures}, "
+                    f"err={notification.get('last_error')})"
+                )
+            else:
+                console.print(f"  discord: {n_status}")
         for provider, readiness in saved.get("ai_readiness", {}).items():
             console.print(
                 f"  ai/{provider}: {readiness.get('status', 'unknown')} "
@@ -209,6 +248,43 @@ def status() -> None:
             console.print(f"  control_mode={latest.get('control_mode')} · total={len(receipts)}")
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         console.print("  [yellow]unverified remediation directory[/yellow]")
+
+
+@app.command(name="ops-check")
+def ops_check(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print machine-readable operational health JSON")
+    ] = False,
+    no_systemd: Annotated[
+        bool, typer.Option("--no-systemd", help="Skip systemd timer/service checks")
+    ] = False,
+) -> None:
+    """Verify Hardshell operational health and Discord alert delivery."""
+    from hardshell.ops_health import evaluate_ops_health
+
+    report = evaluate_ops_health(_guardian_root(), check_systemd=not no_systemd)
+    if json_output:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"[bold]hardshell ops-check[/bold] · overall=[bold]{report['overall_status']}[/bold]"
+        )
+        for name, check in report["checks"].items():
+            st = check.get("status", "unknown")
+            color = "green" if st == "ok" else ("yellow" if st in {"warn", "skipped"} else "red")
+            detail = (
+                check.get("reason")
+                or check.get("delivery_status")
+                or check.get("report_status")
+                or ""
+            )
+            console.print(f"  [{color}]{st}[/{color}] {name}: {detail}")
+        if report["follow_up_actions"]:
+            console.print("\n[bold]Follow-up actions:[/bold]")
+            for action in report["follow_up_actions"]:
+                console.print(f"  • {action}")
+    if report["follow_up_needed"]:
+        raise typer.Exit(2)
 
 
 @app.command(name="config")
@@ -430,7 +506,7 @@ async def _run_watch(inventory_path, output, ai):
     from hardshell.early_warning import build_report, collect_inventory
     from hardshell.intel.vendor import fetch_nginx, fetch_php
 
-    state = Path(__file__).resolve().parents[2] / "build" / "state"
+    state = _guardian_root() / "build" / "state"
     advisories = []
     gaps = []
     source_requests = []
@@ -565,6 +641,27 @@ async def _run_watch(inventory_path, output, ai):
                     current["budget"] = capacity
         except (BudgetDeniedError, OSError):
             result["ai_budget_usage"] = {"error": "budget_store_unavailable"}
+    try:
+        import socket
+
+        from hardshell.reporters.discord import deliver_early_warning
+
+        delivery = await deliver_early_warning(
+            result,
+            socket.gethostname(),
+            state_path=state / "early-warning-alerts.json",
+        )
+        result["notification"] = {k: v for k, v in delivery.items() if k != "ok"}
+        if result.get("status") == "actionable" and not delivery.get("ok"):
+            console.print("[yellow]Discord HIGH notify failed or webhook unset[/yellow]")
+    except Exception:
+        result["notification"] = {
+            "channel": "discord",
+            "status": "failed",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "last_error": "local_notify_error",
+        }
+        console.print("[yellow]Discord HIGH notify skipped due to local error[/yellow]")
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(".tmp")
     temp.write_text(json.dumps(result, ensure_ascii=False, indent=2))
@@ -573,20 +670,6 @@ async def _run_watch(inventory_path, output, ai):
     console.print(
         f"Early warning: {len(result['cases'])} cases; {result['status']}; saved to {output}"
     )
-    try:
-        import socket
-
-        from hardshell.reporters.discord import notify_early_warning
-
-        alerted = await notify_early_warning(
-            result,
-            socket.gethostname(),
-            state_path=state / "early-warning-alerts.json",
-        )
-        if result.get("status") == "actionable" and not alerted:
-            console.print("[yellow]Discord HIGH notify failed or webhook unset[/yellow]")
-    except Exception:
-        console.print("[yellow]Discord HIGH notify skipped due to local error[/yellow]")
     if ai and any(v.get("status") != "ready" for v in result.get("ai_readiness", {}).values()):
         for provider, readiness in result["ai_readiness"].items():
             if readiness.get("status") != "ready":

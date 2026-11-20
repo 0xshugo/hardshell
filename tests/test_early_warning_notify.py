@@ -85,3 +85,66 @@ async def test_remediation_lifecycle_templates(monkeypatch):
         hostname="host",
     )
     assert "完了" in posts[1]
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_webhook_returns_false_and_records_status(tmp_path, monkeypatch):
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("HARDSHELL_STATUS_WEBHOOK_URL", raising=False)
+    state = tmp_path / "alerts.json"
+
+    res = await discord.deliver_early_warning(actionable_report(), "host-a", state_path=state)
+    assert res["ok"] is False
+    assert res["status"] == "skipped_unconfigured"
+    assert res["consecutive_failures"] == 1
+    saved = json.loads(state.read_text())
+    assert saved["last_delivery"]["status"] == "skipped_unconfigured"
+
+
+@pytest.mark.asyncio
+async def test_php_actionable_uses_php_playbook_and_tracks_failures(tmp_path, monkeypatch):
+    posts = []
+
+    async def fake_send_fail(url, content):
+        posts.append(content)
+        return False
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.setattr(discord, "_send", fake_send_fail)
+    state = tmp_path / "alerts.json"
+    php_report = {
+        "status": "actionable",
+        "cases": [
+            {
+                "case_id": "php-1",
+                "advisory_id": "CVE-2026-129496",
+                "product": "php",
+                "asset_id": "freshrss",
+                "installed": "8.4.27",
+                "fixed": "8.4.28",
+                "status": "actionable",
+                "priority": "P1",
+                "exposure": "public",
+                "public_summary": "Timezone cache UAF",
+            }
+        ],
+    }
+
+    failed = await discord.deliver_early_warning(php_report, "host-a", state_path=state)
+    assert failed["ok"] is False
+    assert failed["status"] == "failed"
+    assert failed["consecutive_failures"] == 1
+    assert "operations/playbooks/php-upgrade.md" in posts[0]
+    assert json.loads(state.read_text())["case_ids"] == []
+
+    async def fake_send_ok(url, content):
+        posts.append(content)
+        return True
+
+    monkeypatch.setattr(discord, "_send", fake_send_ok)
+    sent = await discord.deliver_early_warning(php_report, "host-a", state_path=state)
+    assert sent["ok"] is True
+    assert sent["status"] == "sent"
+    assert sent["consecutive_failures"] == 0
+    assert json.loads(state.read_text())["case_ids"] == ["php-1"]
+
