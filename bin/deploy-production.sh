@@ -25,15 +25,19 @@ sync_via_docker() {
         --chown=${OWNER_UID}:${OWNER_GID} \
         --exclude '.venv/' \
         --exclude '.git/' \
+        --exclude '.env' \
         --exclude 'build/' \
+        --exclude 'reports/' \
         --exclude '.pytest_cache/' \
         --exclude '.ruff_cache/' \
         --exclude '__pycache__/' \
         --exclude '*.pyc' \
         /src/ /dest/
-      mkdir -p /dest/build/state /dest/build/remediation
+      mkdir -p /dest/build/state /dest/build/remediation /dest/reports
       chown -R ${OWNER_UID}:${OWNER_GID} /dest/build/state /dest/build/remediation
+      chown ${OWNER_UID}:${OWNER_GID} /dest/reports
       chmod 700 /dest/build/state /dest/build/remediation || true
+      chmod 755 /dest/reports || true
     "
 }
 
@@ -42,14 +46,17 @@ if [[ -w "$DEST" ]]; then
   rsync -a --delete \
     --exclude '.venv/' \
     --exclude '.git/' \
+    --exclude '.env' \
     --exclude 'build/' \
+    --exclude 'reports/' \
     --exclude '.pytest_cache/' \
     --exclude '.ruff_cache/' \
     --exclude '__pycache__/' \
     --exclude '*.pyc' \
     "$SRC"/ "$DEST"/
-  mkdir -p "$DEST/build/state" "$DEST/build/remediation"
+  mkdir -p "$DEST/build/state" "$DEST/build/remediation" "$DEST/reports"
   chmod 700 "$DEST/build/state" "$DEST/build/remediation" || true
+  chmod 755 "$DEST/reports" || true
 else
   sync_via_docker
 fi

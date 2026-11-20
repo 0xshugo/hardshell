@@ -137,27 +137,40 @@ def _actionable_cases(report: dict) -> list[dict]:
     ]
 
 
-def _load_alert_state(path: Path) -> set[str]:
+def _playbook_for_product(product: str | None) -> str:
+    if (product or "").lower() == "php":
+        return "operations/playbooks/php-upgrade.md"
+    return "operations/playbooks/nginx-upgrade.md"
+
+
+def _load_alert_state_doc(path: Path) -> dict:
     try:
         data = json.loads(path.read_text())
-        return set(data.get("case_ids", []))
+        if isinstance(data, dict):
+            return data
     except (OSError, json.JSONDecodeError, TypeError, AttributeError):
-        return set()
+        pass
+    return {}
 
 
-def _save_alert_state(path: Path, case_ids: set[str]) -> None:
+def _load_alert_state(path: Path) -> set[str]:
+    data = _load_alert_state_doc(path)
+    raw_ids = data.get("case_ids") or []
+    return {str(cid) for cid in raw_ids if isinstance(cid, str)}
+
+
+def _save_alert_state(
+    path: Path, case_ids: set[str], *, delivery: dict | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload: dict = {
+        "updated_at": datetime.now(UTC).isoformat(),
+        "case_ids": sorted(case_ids),
+    }
+    if delivery is not None:
+        payload["last_delivery"] = delivery
     temp = path.with_suffix(".tmp")
-    temp.write_text(
-        json.dumps(
-            {
-                "updated_at": datetime.now(UTC).isoformat(),
-                "case_ids": sorted(case_ids),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     temp.chmod(0o600)
     temp.replace(path)
 
@@ -169,6 +182,7 @@ async def notify_remediation_lifecycle(
     asset_id: str,
     hostname: str,
     detail: str = "",
+    product: str = "nginx",
     webhook_url: str | None = None,
 ) -> bool:
     """Discord templates for approve_then_apply: pending_approval / completed / failed."""
@@ -192,31 +206,76 @@ async def notify_remediation_lifecycle(
     if detail:
         lines.append(detail[:300])
     if phase == "pending_approval":
-        lines.append("Playbook: `operations/playbooks/nginx-upgrade.md`")
+        lines.append(f"Playbook: `{_playbook_for_product(product)}`")
     return await _send(url, "\n".join(lines))
 
 
-async def notify_early_warning(
+async def deliver_early_warning(
     report: dict,
     hostname: str,
     *,
     state_path: Path | None = None,
     webhook_url: str | None = None,
-) -> bool:
-    """Alert on new actionable early-warning cases (rule-based HIGH). Dedupes by case_id."""
+) -> dict:
+    """Alert on new actionable early-warning cases (rule-based HIGH) and return delivery status."""
+    now_iso = datetime.now(UTC).isoformat()
     url = _get_webhook_url(webhook_url) or _get_webhook_url(
         None, env_var="HARDSHELL_STATUS_WEBHOOK_URL"
     )
     actionable = _actionable_cases(report)
-    if not url or not actionable:
-        return True
+    state_doc = _load_alert_state_doc(state_path) if state_path is not None else {}
+    known = {str(cid) for cid in (state_doc.get("case_ids") or []) if isinstance(cid, str)}
+    prev_delivery = (
+        state_doc.get("last_delivery") if isinstance(state_doc.get("last_delivery"), dict) else {}
+    )
+    prev_failures = int(prev_delivery.get("consecutive_failures") or 0)
+    last_sent_at = prev_delivery.get("last_sent_at")
 
-    known: set[str] = set()
-    if state_path is not None:
-        known = _load_alert_state(state_path)
+    if not actionable:
+        delivery = {
+            "channel": "discord",
+            "status": "idle",
+            "checked_at": now_iso,
+            "actionable_count": 0,
+            "fresh_count": 0,
+            "consecutive_failures": 0,
+            "last_sent_at": last_sent_at,
+            "last_error": None,
+        }
+        if state_path is not None:
+            _save_alert_state(state_path, known, delivery=delivery)
+        return {"ok": True, **delivery}
+
+    if not url:
+        delivery = {
+            "channel": "discord",
+            "status": "skipped_unconfigured",
+            "checked_at": now_iso,
+            "actionable_count": len(actionable),
+            "fresh_count": len([c for c in actionable if c.get("case_id") not in known]),
+            "consecutive_failures": prev_failures + 1,
+            "last_sent_at": last_sent_at,
+            "last_error": "discord_webhook_unconfigured",
+        }
+        if state_path is not None:
+            _save_alert_state(state_path, known, delivery=delivery)
+        return {"ok": False, **delivery}
+
     fresh = [case for case in actionable if case.get("case_id") not in known]
     if not fresh:
-        return True
+        delivery = {
+            "channel": "discord",
+            "status": "deduped",
+            "checked_at": now_iso,
+            "actionable_count": len(actionable),
+            "fresh_count": 0,
+            "consecutive_failures": 0,
+            "last_sent_at": last_sent_at,
+            "last_error": None,
+        }
+        if state_path is not None:
+            _save_alert_state(state_path, known, delivery=delivery)
+        return {"ok": True, **delivery}
 
     lines = [
         f"🔴 **hardshell HIGH early-warning** | `{hostname}` | "
@@ -236,17 +295,56 @@ async def notify_early_warning(
             lines.append(f"    {summary}")
     if len(fresh) > 8:
         lines.append(f"  • … and {len(fresh) - 8} more")
-    lines.extend(
-        [
-            "",
-            "Playbook: `operations/playbooks/nginx-upgrade.md`",
-            "Do not auto-remediate from orca-control.",
-        ]
-    )
+    playbooks = sorted({_playbook_for_product(case.get("product")) for case in fresh})
+    lines.append("")
+    for pb in playbooks:
+        lines.append(f"Playbook: `{pb}`")
+    lines.append("Do not auto-remediate from orca-control.")
+
     ok = await _send(url, "\n".join(lines))
-    if ok and state_path is not None:
-        _save_alert_state(state_path, known | {c["case_id"] for c in fresh if c.get("case_id")})
-    return ok
+    if ok:
+        new_known = known | {c["case_id"] for c in fresh if c.get("case_id")}
+        delivery = {
+            "channel": "discord",
+            "status": "sent",
+            "checked_at": now_iso,
+            "actionable_count": len(actionable),
+            "fresh_count": len(fresh),
+            "consecutive_failures": 0,
+            "last_sent_at": now_iso,
+            "last_error": None,
+        }
+        if state_path is not None:
+            _save_alert_state(state_path, new_known, delivery=delivery)
+        return {"ok": True, **delivery}
+
+    delivery = {
+        "channel": "discord",
+        "status": "failed",
+        "checked_at": now_iso,
+        "actionable_count": len(actionable),
+        "fresh_count": len(fresh),
+        "consecutive_failures": prev_failures + 1,
+        "last_sent_at": last_sent_at,
+        "last_error": "discord_webhook_post_failed",
+    }
+    if state_path is not None:
+        _save_alert_state(state_path, known, delivery=delivery)
+    return {"ok": False, **delivery}
+
+
+async def notify_early_warning(
+    report: dict,
+    hostname: str,
+    *,
+    state_path: Path | None = None,
+    webhook_url: str | None = None,
+) -> bool:
+    """Alert on new actionable early-warning cases (rule-based HIGH). Dedupes by case_id."""
+    result = await deliver_early_warning(
+        report, hostname, state_path=state_path, webhook_url=webhook_url
+    )
+    return bool(result.get("ok"))
 
 
 async def _send(webhook_url: str, content: str) -> bool:
