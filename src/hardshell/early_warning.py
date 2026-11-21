@@ -29,8 +29,7 @@ def _docker_image_ref(name: str) -> str:
     ).strip()
 
 
-def _public_http_exposure(name: str) -> str:
-    """Classify published HTTP(S) listeners without reading application config."""
+def _docker_ports(name: str):
     raw = subprocess.check_output(
         ["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", name],
         text=True,
@@ -39,6 +38,41 @@ def _public_http_exposure(name: str) -> str:
     try:
         ports = json.loads(raw) or {}
     except json.JSONDecodeError:
+        return None
+    return ports if isinstance(ports, dict) else None
+
+
+def _docker_labels(name: str) -> dict:
+    """Container labels only (never Env): used for Coolify / embedded-runtime hints."""
+    try:
+        raw = subprocess.check_output(
+            ["docker", "inspect", "--format", "{{json .Config.Labels}}", name],
+            text=True,
+            timeout=10,
+        ).strip()
+        labels = json.loads(raw) or {}
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(labels, dict):
+        return {}
+    return {str(k): str(v) for k, v in labels.items()}
+
+
+def _published_bindings(ports) -> list[str]:
+    out = []
+    for key, bindings in sorted((ports or {}).items()):
+        for binding in bindings or []:
+            host_ip = (binding or {}).get("HostIp") or "0.0.0.0"
+            host_port = (binding or {}).get("HostPort") or ""
+            if host_port:
+                out.append(f"{host_ip}:{host_port}->{key}")
+    return out
+
+
+def _public_http_exposure(name: str, ports=None) -> str:
+    """Classify published HTTP(S) listeners without reading application config."""
+    ports = ports if ports is not None else _docker_ports(name)
+    if ports is None:
         return "unknown"
     public = False
     for key, bindings in ports.items():
@@ -65,11 +99,90 @@ def _looks_like_nginx(image_ref: str) -> bool:
     return bool(re.search(r"(^|/)nginx([:]|$)", ref) or "nginx" in ref.split("/")[-1])
 
 
+def _label_nginx_version(labels: dict) -> str | None:
+    """Image-declared nginx version (e.g. coolify ``io.coolify.nginx.version=1.31.9-r1``)."""
+    for key, value in sorted(labels.items()):
+        if key.lower().endswith("nginx.version"):
+            match = VERSION.match(value or "")
+            if match:
+                return match.group(0)
+    return None
+
+
+def _image_nginx_metadata(image_id: str) -> dict:
+    """Read-only ``docker image inspect``: tags and declared nginx version, no exec.
+
+    Official ``nginx:*`` images declare ``NGINX_VERSION`` in their Env; only that key
+    is retained, never other Env values.
+    """
+    meta = {"image_id": image_id, "image_refs": [], "nginx_version": None}
+    try:
+        raw = subprocess.check_output(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                "{{json .RepoTags}}\t{{json .Config.Labels}}\t{{json .Config.Env}}",
+                image_id,
+            ],
+            text=True,
+            timeout=10,
+        ).strip()
+        tags_raw, labels_raw, env_raw = raw.split("\t", 2)
+        tags = json.loads(tags_raw) or []
+        labels = json.loads(labels_raw) or {}
+        env = json.loads(env_raw) or []
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return meta
+    meta["image_refs"] = [t for t in tags if isinstance(t, str)][:5]
+    for item in env if isinstance(env, list) else []:
+        if isinstance(item, str) and item.startswith("NGINX_VERSION="):
+            value = item.split("=", 1)[1]
+            if VERSION.fullmatch(value):
+                meta["nginx_version"] = value
+    if meta["nginx_version"] is None and isinstance(labels, dict):
+        meta["nginx_version"] = _label_nginx_version(
+            {str(k): str(v) for k, v in labels.items()}
+        )
+    return meta
+
+
+def _coolify_context(labels: dict, image: str, version: str) -> dict | None:
+    """What a Coolify redeploy would bring back, from container labels only.
+
+    Coolify regenerates the compose file from its own database on every redeploy, so a
+    container recreated by hand with a newer tag reverts to the image Coolify resolved
+    (``com.docker.compose.image``) unless the tag is pinned in Coolify itself.
+    """
+    if labels.get("coolify.managed") != "true":
+        return None
+    ctx = {
+        "managed": True,
+        "type": labels.get("coolify.type"),
+        "resource": labels.get("coolify.resourceName") or labels.get("coolify.name"),
+        "project": labels.get("coolify.projectName"),
+    }
+    compose_image = labels.get("com.docker.compose.image") or ""
+    if compose_image == image:
+        ctx["recreate_image"] = {"image_id": image, "image_refs": [], "nginx_version": version}
+    elif DIGEST.fullmatch(compose_image):
+        ctx["recreate_image"] = _image_nginx_metadata(compose_image)
+    else:
+        ctx["recreate_image"] = {"image_id": None, "image_refs": [], "nginx_version": None}
+    return ctx
+
+
 def _probe_nginx_container(
-    name: str, *, image: str | None = None, image_ref: str | None = None
+    name: str,
+    *,
+    image: str | None = None,
+    image_ref: str | None = None,
+    labels: dict | None = None,
 ):
     image = image if image is not None else _docker_image_id(name)
     image_ref = image_ref if image_ref is not None else _docker_image_ref(name)
+    labels = labels if labels is not None else {}
     try:
         run = subprocess.run(
             ["docker", "exec", name, "nginx", "-v"],
@@ -82,17 +195,35 @@ def _probe_nginx_container(
             return None, {"asset_id": name, "reason": "image_changed"}
         match = NGINX_VERSION_LINE.search((run.stderr or "") + "\n" + (run.stdout or ""))
         if run.returncode == 0 and match:
-            return {
+            ports = _docker_ports(name)
+            asset = {
                 "asset_id": name,
                 "product": "nginx",
                 "version": match.group(1),
                 "image_digest": image,
                 "image_ref": image_ref,
-                "exposure": _public_http_exposure(name),
+                # official_image: nginx:* upstream build; embedded: nginx packaged inside
+                # another image (e.g. Debian apt nginx in postiz), distro backports apply.
+                "packaging": "official_image" if _looks_like_nginx(image_ref) else "embedded",
+                "exposure": _public_http_exposure(name, ports),
+                "published": _published_bindings(ports),
                 "observed_at": datetime.now(UTC).isoformat(),
-            }, None
+            }
+            coolify = _coolify_context(labels, image, match.group(1))
+            if coolify is not None:
+                asset["coolify"] = coolify
+            return asset, None
         if _looks_like_nginx(image_ref):
             return None, {"asset_id": name, "reason": "nginx_runtime_unverified"}
+        declared = _label_nginx_version(labels)
+        if declared:
+            # Image metadata says nginx is embedded but `nginx -v` did not answer.
+            return None, {
+                "asset_id": name,
+                "reason": "embedded_nginx_unverified",
+                "declared_version": declared,
+                "image_ref": image_ref,
+            }
         return None, None
     except subprocess.TimeoutExpired:
         return None, {"asset_id": name, "reason": "runtime_probe_timeout"}
@@ -134,11 +265,16 @@ def _probe_php_container(
 def _probe_container(name: str):
     image = _docker_image_id(name)
     image_ref = _docker_image_ref(name)
+    labels = _docker_labels(name)
     assets = []
     gaps = []
-    nginx_asset, nginx_gap = _probe_nginx_container(name, image=image, image_ref=image_ref)
+    nginx_asset, nginx_gap = _probe_nginx_container(
+        name, image=image, image_ref=image_ref, labels=labels
+    )
     if nginx_asset is not None:
         assets.append(nginx_asset)
+    elif nginx_gap is not None and nginx_gap.get("reason") == "embedded_nginx_unverified":
+        gaps.append(nginx_gap)
     elif nginx_gap is not None and nginx_gap.get("reason") in {
         "image_changed",
         "runtime_probe_timeout",
@@ -156,10 +292,53 @@ def _probe_container(name: str):
     return assets, gaps
 
 
+def _tunnel_projects(rows) -> set[str]:
+    """Compose projects that run a cloudflared container (tunnel ingress, no host port)."""
+    return {
+        project
+        for _name, image_ref, project in rows
+        if project and "cloudflared" in (image_ref or "").lower().split("/")[-1]
+    }
+
+
+def _exposure_context(asset: dict, tunnels: set[str], projects: dict[str, str]) -> dict:
+    """Human-readable reachability: public listener, local-only, or local behind a tunnel."""
+    project = projects.get(asset.get("asset_id", ""), "")
+    tunnel = "cloudflared" if project and project in tunnels else None
+    exposure = asset.get("exposure", "unknown")
+    if exposure == "public":
+        summary = "public_listener"
+    elif exposure == "local" and tunnel:
+        summary = "local_bind_behind_tunnel"
+    elif exposure == "local":
+        summary = "local_only"
+    else:
+        summary = "unknown"
+    return {
+        "summary": summary,
+        "published": asset.get("published", []),
+        "tunnel": tunnel,
+    }
+
+
 def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
-    names = subprocess.check_output(
-        ["docker", "ps", "--format", "{{.Names}}"], text=True, timeout=15
+    lines = subprocess.check_output(
+        [
+            "docker",
+            "ps",
+            "--format",
+            '{{.Names}}\t{{.Image}}\t{{.Label "com.docker.compose.project"}}',
+        ],
+        text=True,
+        timeout=15,
     ).splitlines()
+    rows = []
+    for line in lines:
+        parts = (line.split("\t") + ["", ""])[:3]
+        rows.append((parts[0], parts[1], parts[2]))
+    names = [row[0] for row in rows]
+    tunnels = _tunnel_projects(rows)
+    projects = {name: project for name, _ref, project in rows}
     if len(names) > 200:
         raise ValueError("inventory_too_large")
     for name in names:
@@ -185,12 +364,16 @@ def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
                 break
             assets.extend(found_assets)
             gaps.extend(found_gaps)
+    for asset in assets:
+        if asset.get("product") == "nginx":
+            asset["exposure_context"] = _exposure_context(asset, tunnels, projects)
     return {
         "observed_at": datetime.now(UTC).isoformat(),
         "assets": assets,
         "gaps": gaps,
         "scope": (
-            "running containers: php on PATH and nginx -v; "
+            "running containers: php on PATH and nginx -v (official and embedded images); "
+            "Coolify recreate image via labels; "
             "host and embedded unverified runtimes remain coverage gaps"
         ),
     }
@@ -316,38 +499,99 @@ def _nginx_cases(asset, advisories, now):
                 sort_keys=True,
             ).encode()
         ).hexdigest()
-        cases.append(
-            {
-                "case_id": case_id,
-                "advisory_id": advisory["id"],
-                "asset_id": asset["asset_id"],
-                "product": "nginx",
-                "installed": version,
-                "image_digest": asset.get("image_digest"),
-                "image_ref": asset.get("image_ref"),
-                "exposure": exposure,
-                "severity": severity,
-                "fixed": threshold,
-                "fixed_versions": floors,
-                "status": status,
-                "priority": priority,
-                "references": advisory.get("references", []),
-                "public_summary": advisory.get("public_summary", ""),
-                "reason": (
-                    "nginx_upstream_version_in_vulnerable_range; "
-                    "distro_backport_unverified"
-                ),
-                "next_steps": [
-                    "verify_vendor_patch",
-                    "prepare_image_update",
-                    "request_service_approval",
-                    "verify_runtime_after_update",
-                ],
-                "requires_approval": True,
-                "executable": False,
-            }
-        )
+        embedded = asset.get("packaging") == "embedded"
+        reason = "nginx_upstream_version_in_vulnerable_range; distro_backport_unverified"
+        next_steps = [
+            "verify_vendor_patch",
+            "prepare_image_update",
+            "request_service_approval",
+            "verify_runtime_after_update",
+        ]
+        if embedded:
+            reason = "embedded_nginx_in_non_nginx_image; " + reason
+            next_steps = ["check_distro_security_tracker", *next_steps]
+        context = asset.get("exposure_context")
+        if context and context.get("summary") == "local_bind_behind_tunnel":
+            reason += "; local_bind_reachable_via_tunnel"
+        case = {
+            "case_id": case_id,
+            "advisory_id": advisory["id"],
+            "asset_id": asset["asset_id"],
+            "product": "nginx",
+            "installed": version,
+            "image_digest": asset.get("image_digest"),
+            "image_ref": asset.get("image_ref"),
+            "exposure": exposure,
+            "severity": severity,
+            "fixed": threshold,
+            "fixed_versions": floors,
+            "status": status,
+            "priority": priority,
+            "references": advisory.get("references", []),
+            "public_summary": advisory.get("public_summary", ""),
+            "reason": reason,
+            "next_steps": next_steps,
+            "requires_approval": True,
+            "executable": False,
+        }
+        for key in ("packaging", "exposure_context"):
+            if asset.get(key):
+                case[key] = asset[key]
+        if asset.get("coolify"):
+            case["coolify_managed"] = True
+        cases.append(case)
     return cases
+
+
+def _coolify_recreate_gaps(asset, advisories):
+    """Coverage gap when a Coolify redeploy would bring back a vulnerable nginx image.
+
+    Uses the same advisory floors/ranges as the nginx cases (the "minimum safe tag").
+    """
+    coolify = asset.get("coolify")
+    if not coolify or asset.get("product") != "nginx":
+        return []
+    recreate = coolify.get("recreate_image") or {}
+    if recreate.get("image_id") and recreate.get("image_id") == asset.get("image_digest"):
+        # Recreate keeps the running image; any exposure is already an nginx case.
+        return []
+    recreate_version = recreate.get("nginx_version")
+    base = {
+        "asset_id": asset.get("asset_id"),
+        "product": "nginx",
+        "running_version": asset.get("version"),
+        "recreate_image_id": recreate.get("image_id"),
+        "recreate_image_refs": recreate.get("image_refs", []),
+        "coolify_resource": coolify.get("resource"),
+        "playbook": "operations/playbooks/nginx-upgrade.md#coolify-pin",
+    }
+    if not recreate_version or not VERSION.fullmatch(recreate_version):
+        return [{**base, "reason": "coolify_recreate_image_unverified"}]
+    hits = []
+    for advisory in advisories:
+        if advisory.get("product") != "nginx":
+            continue
+        floors = [v for v in advisory.get("fixed_versions", []) if VERSION.fullmatch(v)]
+        ranges = advisory.get("vulnerable_ranges") or []
+        if floors and ranges and nginx_version_affected(recreate_version, floors, ranges):
+            same_branch = [v for v in floors if v.split(".")[:2] == recreate_version.split(".")[:2]]
+            hits.append((advisory["id"], max(same_branch or floors, key=_vkey)))
+    if not hits:
+        return []
+    return [
+        {
+            **base,
+            "reason": "coolify_recreate_reverts_nginx",
+            "recreate_version": recreate_version,
+            "advisory_ids": sorted({h[0] for h in hits}),
+            # Minimum safe tag to pin in Coolify (highest floor across matching advisories).
+            "fixed": max((h[1] for h in hits), key=_vkey),
+        }
+    ]
+
+
+def _vkey(version: str):
+    return tuple(map(int, version.split(".")))
 
 
 def build_report(intel, inventory, now=None):
@@ -361,12 +605,14 @@ def build_report(intel, inventory, now=None):
         item = dict(advisory)
         item["_intel_observed_at"] = intel.get("observed_at")
         advisories.append(item)
+    coverage_gaps = list(inventory.get("gaps", []))
     for asset in inventory["assets"]:
         product = asset.get("product")
         if product == "php":
             cases.extend(_php_cases(asset, advisories, now))
         elif product == "nginx":
             cases.extend(_nginx_cases(asset, advisories, now))
+            coverage_gaps.extend(_coolify_recreate_gaps(asset, advisories))
     status = "needs_review" if cases else "insufficient_evidence"
     if any(c.get("status") == "actionable" for c in cases):
         status = "actionable"
@@ -378,7 +624,7 @@ def build_report(intel, inventory, now=None):
         "source_observed_at": intel.get("observed_at"),
         "source_requests": intel.get("source_requests", []),
         "feed_gaps": gaps,
-        "coverage_gaps": list(inventory.get("gaps", [])),
+        "coverage_gaps": coverage_gaps,
         "cases": cases,
         "observed_runtimes": [
             {
@@ -389,7 +635,9 @@ def build_report(intel, inventory, now=None):
                     "version",
                     "image_digest",
                     "image_ref",
+                    "packaging",
                     "exposure",
+                    "exposure_context",
                     "observed_at",
                 )
                 if a.get(k) is not None

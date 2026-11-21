@@ -16,8 +16,14 @@
      build/early-warning.json
    ```
 4. **残債レビュー**
-   - Coolify 再作成で nginx が古いタグに戻っていないか
-   - postiz 等の埋め込み nginx（local exposure）の更新方針
+   - Coolify 再作成で nginx が古いタグに戻っていないか（自動検知: `coverage_gaps[].reason=="coolify_recreate_reverts_nginx"` → `operations/playbooks/nginx-upgrade.md#coolify-pin`）
+     ```bash
+     jq '.coverage_gaps[] | select(.reason|startswith("coolify_recreate"))' build/early-warning.json
+     ```
+   - postiz 等の埋め込み nginx の更新方針（`packaging=="embedded"` の case。`exposure_context.summary` で `local_only` / `local_bind_behind_tunnel` / `public_listener` を確認）
+     ```bash
+     jq '.cases[] | select(.product=="nginx" and .packaging=="embedded") | {asset_id, installed, status, exposure_context}' build/early-warning.json
+     ```
    - PHP 搭載コンテナ（`freshrss` / `coolify`）が最新セキュリティリリース・Debian バックポートに追従しているか
    - `coverage_gaps` / `feed_gaps` や Discord 通知失敗（`notification.status`）が増えていないか
 
