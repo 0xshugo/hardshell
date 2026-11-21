@@ -673,6 +673,12 @@ async def _run_watch(inventory_path, output, ai):
     console.print(
         f"Early warning: {len(result['cases'])} cases; {result['status']}; saved to {output}"
     )
+    pushgateway_url = os.environ.get("HARDSHELL_PUSHGATEWAY_URL", "").strip()
+    if pushgateway_url:
+        from hardshell.watch_metrics import push_watch_metrics
+
+        if not await push_watch_metrics(result, pushgateway_url):
+            console.print("[yellow]Pushgateway metrics push skipped/failed[/yellow]")
     if ai and any(v.get("status") != "ready" for v in result.get("ai_readiness", {}).values()):
         for provider, readiness in result["ai_readiness"].items():
             if readiness.get("status") != "ready":
