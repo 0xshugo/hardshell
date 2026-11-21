@@ -12,7 +12,7 @@
 }
 ```
 
-All sections are optional. Missing files are skipped; invalid JSON is reported by `agent-registry` as `AGENT-REGISTRY-INVALID-JSON`.
+All sections are optional. Missing files are skipped; invalid JSON raises `RuntimeError("registry_input_invalid")`, so the scanner fails closed.
 
 ## `agents[]`
 

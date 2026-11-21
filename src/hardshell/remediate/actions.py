@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 class RemediationTier(StrEnum):
     AUTO = "auto"      # Execute immediately, notify after
-    PROPOSE = "propose"  # Notify + execute after maintenance window
+    PROPOSE = "propose"  # Notify + include in fix script; never auto-executed
     ALERT = "alert"    # Notify only, human decision required
 
 
@@ -20,8 +20,6 @@ class RemediationAction(BaseModel):
     title: str
     command: str | None = None
     description: str = ""
-    requires_reboot: bool = False
-    maintenance_window_only: bool = False
 
     def matches(self, finding_id: str) -> bool:
         return fnmatch.fnmatch(finding_id, self.finding_id_pattern)
@@ -51,6 +49,7 @@ RULES: list[RemediationAction] = [
         command="systemctl enable --now unattended-upgrades",
         description="Ensure automatic security updates are running.",
     ),
+    # PROPOSE — package install or upgrade
     RemediationAction(
         finding_id_pattern="SYS-F2B-MISSING",
         tier=RemediationTier.PROPOSE,
@@ -58,14 +57,12 @@ RULES: list[RemediationAction] = [
         command="apt-get install -y fail2ban && systemctl enable --now fail2ban",
         description="Install fail2ban to protect against brute-force attacks.",
     ),
-    # PROPOSE — service restart or package upgrade (maintenance window preferred)
     RemediationAction(
         finding_id_pattern="SYS-PKG-SEC",
         tier=RemediationTier.PROPOSE,
         title="Apply security package updates",
         command="DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
         description="Apply pending OS security updates.",
-        maintenance_window_only=True,
     ),
     # ALERT — human judgment required, could cause lockout or data loss
     RemediationAction(
