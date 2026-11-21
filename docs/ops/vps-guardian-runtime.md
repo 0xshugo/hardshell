@@ -18,9 +18,53 @@
 | 本番ソース / venv / timer cwd | `/home/shugo/hardshell` |
 | 本 Workspace（実装・レビュー） | `/var/lib/orca-control/workspaces/hardshell-security` |
 | early-warning 出力 | `/home/shugo/hardshell/build/early-warning.json` |
+| scan レポート（`bin/scan.sh`） | `/home/shugo/hardshell/reports/{daily,weekly}-YYYY-MM-DD.json` |
+| orca-control 向け読み取り専用コピー | `/var/lib/hardshell-shared/`（下記） |
+| 共有ヘルパ（root 所有コピー） | `/usr/local/libexec/hardshell/share-report`（元: `operations/share/hardshell-share-report.sh`） |
+| 共有 drop-in | `/etc/systemd/system/hardshell-watch.service.d/50-share-report.conf` |
 | 修復証跡 | `/home/shugo/hardshell/build/remediation/<date>-<cve>.json` |
 | CTI feeds | `/home/shugo/services/secfeed`, `/home/shugo/services/secfeed-autonomous` |
 | 公開エッジ | aoi-system `factory-nginx` |
+
+## orca-control 向け共有ディレクトリ `/var/lib/hardshell-shared`
+
+`orca-control` は `/home/shugo` 配下を読めない（ACL も付けない）。Orca オートメーション
+（`hardshell-actionable-review` など）が本番の状態を見るための唯一の窓口がこのディレクトリ。
+
+| ファイル | 内容 | 更新タイミング |
+|---|---|---|
+| `early-warning.json` | `build/early-warning.json` のコピー | watch 成功後（exit 0/2）の `ExecStartPost=+` |
+| `daily-latest.json` / `weekly-latest.json` | `reports/` の最新日付レポートのコピー（元ファイル名は `.daily-source` / `.weekly-source`） | 同上（scan は cron なので最大 1 watch 周期遅れ） |
+| `version.json` | 本番ツリーの git commit / branch / dirty、最後の watch の `SERVICE_RESULT` / `EXIT_STATUS` と時刻 | watch 毎回（失敗時も）の `ExecStopPost=+` |
+
+- ディレクトリ `root:orca-control 0750`、ファイル `root:orca-control 0640`。shugo も orca-control も書き込めない。
+- ヘルパは root で起動されるが、元ファイルは `setpriv` で shugo 権限に落として読む。シンボリックリンクは追わない。
+- コピーは allowlist のみ。`build/state/`（Discord webhook）と `.env` / `provider.env`（AI 認証情報）は絶対にコピーしない。
+- ヘルパ失敗は watch ユニットを失敗させない（`-` 接頭辞、常に exit 0）。
+
+### セットアップ（オーナーが一度だけ）
+
+```sh
+# shugo として本番ツリーを更新
+cd /home/shugo/hardshell && git pull --ff-only
+# 内容を確認してから root で実行（冪等）
+sudo /home/shugo/hardshell/operations/grant-orca-readonly.sh --dry-run
+sudo /home/shugo/hardshell/operations/grant-orca-readonly.sh --run-now
+```
+
+`--with-journal` は `orca-control` を `systemd-journal` に追加する。これは **システム全体の journal**
+（sshd, sudo, 全ユニット）を読めるようにするため既定では付けない。ロールバック手順はスクリプトの最後に表示される。
+ヘルパ（`operations/share/hardshell-share-report.sh`）を更新したら、スクリプトを再実行して root 所有コピーを更新する。
+
+### precheck の判断
+
+`operations/automations/precheck-actionable.sh` は `$HARDSHELL_EARLY_WARNING` →
+`/var/lib/hardshell-shared/early-warning.json` → `/home/shugo/hardshell/build/early-warning.json` の順に読む。
+Workspace の `build/early-warning.json` はプレースホルダなので使わない。
+
+- 新しい（2 時間以内）レポートに actionable あり → exit 0（レビュー起動）
+- 新しいレポートに actionable なし → exit 1（スキップ）
+- 読めない / 壊れている / 2 時間より古い → exit 0（エージェントが「本番が見えない」を報告）
 
 ## 制御モード
 
