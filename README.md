@@ -4,6 +4,13 @@ VPS security hardening tool — scan, enrich with CTI, prioritize, remediate.
 
 hardshell unifies multiple security scanners (Trivy, Grype, Lynis, Nuclei) with a built-in system checker, enriches findings using public threat intelligence (EPSS, CISA KEV), scores risks, and optionally generates AI-powered remediation plans.
 
+## Official Overview & Solo Guardian
+
+- **Product overview & architecture**: https://aoifuture.com/apps/hardshell/
+- **Terms & legal notice (Tokushoho)**: https://aoifuture.com/apps/hardshell/terms
+
+**Hardshell Community** (this repository, MIT) is free, local-first, and requires no account or subscription. For solo operators who also want an off-host Out-of-Band Witness, a Public Verified Trust Page, Ed25519 offline-verifiable entitlements (up to 3 VPS nodes), and a 1-Tap HCAP v0.2 approval & pre-change rollback broker, see **Hardshell Solo Guardian** (14-day free trial) on [aoifuture.com/apps/hardshell](https://aoifuture.com/apps/hardshell/). Community scans and monitored VPS uptime remain fail-open even if a subscription expires or the relay is unreachable.
+
 ## Security Control Adapters (HCAP)
 
 Hardshell can coordinate external control planes through the Hardshell Control Adapter Protocol. The core stays fail-closed: observation does not grant mutation, provider changes return typed receipts, and queued/ambiguous effects require independent readback before they become verified success.
