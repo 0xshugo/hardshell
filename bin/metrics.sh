@@ -15,7 +15,8 @@ INFO=$(jq '.summary.info' "$JSON_FILE")
 TOTAL=$(jq '.summary.total' "$JSON_FILE")
 
 # EPSS/KEV enrichment (if available)
-EPSS_HIGH=$(jq -r '[.findings[] | select((.epss_score // 0) >= 0.1)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
+EPSS_HIGH=$(jq -r '[.findings[] | select((.epss_score // 0) >= 0.7)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
+EPSS_ELEVATED=$(jq -r '[.findings[] | select((.epss_score // 0) >= 0.1)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
 KEV_COUNT=$(jq -r '[.findings[] | select(.in_cisa_kev == true)] | length' "$JSON_FILE" 2>/dev/null || echo 0)
 
 # Status フラグ: 0=OK, 1=NG
@@ -53,9 +54,13 @@ SCAN_TS=$(jq -r '.timestamp' "$JSON_FILE" | xargs -I{} date -d {} +%s 2>/dev/nul
   echo "hardshell_findings_total{severity=\"info\"} $INFO"
 
   # CTI enrichment metrics
-  echo "# HELP hardshell_epss_high_count Findings with EPSS >= 0.1"
+  echo "# HELP hardshell_epss_high_count Findings with EPSS >= 0.7"
   echo "# TYPE hardshell_epss_high_count gauge"
   echo "hardshell_epss_high_count $EPSS_HIGH"
+
+  echo "# HELP hardshell_epss_elevated_count Findings with EPSS >= 0.1"
+  echo "# TYPE hardshell_epss_elevated_count gauge"
+  echo "hardshell_epss_elevated_count $EPSS_ELEVATED"
 
   echo "# HELP hardshell_kev_count Findings in CISA KEV"
   echo "# TYPE hardshell_kev_count gauge"

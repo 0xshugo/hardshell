@@ -1,0 +1,5 @@
+# Install as /etc/systemd/system/hardshell-watch.service.d/30-metrics.conf
+# Best-effort Pushgateway metrics push from hardshell-watch.
+# Then: systemctl daemon-reload && systemctl start hardshell-watch.service
+[Service]
+Environment=HARDSHELL_PUSHGATEWAY_URL=http://127.0.0.1:9091

@@ -22,7 +22,7 @@ def plan_actions(
     actions: list[PlannedAction] = []
 
     for finding in sorted(findings, key=lambda f: f.risk_score, reverse=True):
-        rule = get_rule(finding.id)
+        rule = get_rule(finding.id, severity=finding.severity)
         if rule is None:
             continue
         if rule.tier not in tiers:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
-from datetime import datetime
+from datetime import UTC, datetime
 
 from hardshell.models import Finding
 from hardshell.remediate.actions import RemediationTier
@@ -55,7 +55,7 @@ def render_fix_script(findings: list[Finding], tiers: list[RemediationTier] | No
     actions = plan_actions(findings, tiers=tiers)
     lines = [
         "#!/usr/bin/env bash",
-        "# hardshell fix script — generated " + datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "# hardshell fix script — generated " + datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         "# Review before executing. Run with: sudo bash fix.sh",
         "set -euo pipefail",
         "",

@@ -7,6 +7,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from hardshell.models import Severity
+
 
 class RemediationTier(StrEnum):
     AUTO = "auto"      # Execute immediately, notify after
@@ -22,9 +24,14 @@ class RemediationAction(BaseModel):
     description: str = ""
     requires_reboot: bool = False
     maintenance_window_only: bool = False
+    min_severity: Severity | None = None
 
-    def matches(self, finding_id: str) -> bool:
-        return fnmatch.fnmatch(finding_id, self.finding_id_pattern)
+    def matches(self, finding_id: str, severity: Severity | None = None) -> bool:
+        if not fnmatch.fnmatch(finding_id, self.finding_id_pattern):
+            return False
+        if self.min_severity is not None and severity is not None:
+            return severity.weight >= self.min_severity.weight
+        return True
 
 
 # Ordered: first match wins
@@ -36,6 +43,7 @@ RULES: list[RemediationAction] = [
         title="Renew SSL certificate",
         command="certbot renew --quiet --deploy-hook 'docker kill --signal=HUP factory-nginx'",
         description="Renew expired/expiring Let's Encrypt certificate and reload nginx.",
+        min_severity=Severity.MEDIUM,
     ),
     RemediationAction(
         finding_id_pattern="SYS-F2B-DOWN",
@@ -89,8 +97,8 @@ RULES: list[RemediationAction] = [
 ]
 
 
-def get_rule(finding_id: str) -> RemediationAction | None:
+def get_rule(finding_id: str, severity: Severity | None = None) -> RemediationAction | None:
     for rule in RULES:
-        if rule.matches(finding_id):
+        if rule.matches(finding_id, severity=severity):
             return rule
     return None
