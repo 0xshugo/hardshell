@@ -58,6 +58,59 @@ def _docker_labels(name: str) -> dict:
     return {str(k): str(v) for k, v in labels.items()}
 
 
+def _docker_networks(name: str) -> list[str] | None:
+    """Names of docker networks the container is attached to (read-only inspect)."""
+    try:
+        raw = subprocess.check_output(
+            ["docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", name],
+            text=True,
+            timeout=10,
+        ).strip()
+        networks = json.loads(raw)
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(networks, dict):
+        return None
+    return sorted(str(k) for k in networks)
+
+
+CADDY_LABEL = re.compile(r"caddy(_\d+)?(\.|$)")
+
+
+def _routing_label_kinds(labels: dict) -> list[str]:
+    """Reverse-proxy routing label families present on the container (keys only)."""
+    kinds = set()
+    for key in labels:
+        lowered = key.lower()
+        if lowered.startswith("traefik."):
+            kinds.add("traefik")
+        elif CADDY_LABEL.match(lowered):
+            kinds.add("caddy")
+    return sorted(kinds)
+
+
+def _proxy_kind(name: str, image_ref: str) -> str | None:
+    """Heuristic: traefik / caddy / coolify-proxy from container name or image."""
+    image = (image_ref or "").lower().split("/")[-1]
+    lowered = (name or "").lower()
+    for kind in ("traefik", "caddy"):
+        if kind in image or kind in lowered:
+            return kind
+    if lowered == "coolify-proxy" or lowered.startswith("coolify-proxy"):
+        return "coolify-proxy"
+    return None
+
+
+def _running_proxies(rows) -> list[dict]:
+    """Reverse proxies among running containers (``docker ps`` rows + network inspect)."""
+    proxies = []
+    for name, image_ref, _project in rows:
+        kind = _proxy_kind(name, image_ref)
+        if kind:
+            proxies.append({"name": name, "kind": kind, "networks": _docker_networks(name)})
+    return proxies
+
+
 def _published_bindings(ports) -> list[str]:
     out = []
     for key, bindings in sorted((ports or {}).items()):
@@ -212,6 +265,8 @@ def _probe_nginx_container(
             coolify = _coolify_context(labels, image, match.group(1))
             if coolify is not None:
                 asset["coolify"] = coolify
+                asset["networks"] = _docker_networks(name)
+                asset["routing_labels"] = _routing_label_kinds(labels)
             return asset, None
         if _looks_like_nginx(image_ref):
             return None, {"asset_id": name, "reason": "nginx_runtime_unverified"}
@@ -301,24 +356,83 @@ def _tunnel_projects(rows) -> set[str]:
     }
 
 
-def _exposure_context(asset: dict, tunnels: set[str], projects: dict[str, str]) -> dict:
-    """Human-readable reachability: public listener, local-only, or local behind a tunnel."""
+def _host_bindings(published: list[str]) -> str:
+    """none / loopback_only / public from ``HostIp:HostPort->port`` strings."""
+    if not published:
+        return "none"
+    for item in published:
+        host_ip = item.split("->", 1)[0].rsplit(":", 1)[0].strip("[]")
+        if not host_ip.startswith(("127.", "::1")):
+            return "public"
+    return "loopback_only"
+
+
+def _matching_proxy(asset: dict, proxies: list[dict]) -> str | None:
+    """Running proxy that could route this container's labels (kind + shared network).
+
+    Unknown network membership on either side is treated as a match (conservative).
+    """
+    kinds = set(asset.get("routing_labels") or [])
+    if not kinds:
+        return None
+    networks = asset.get("networks")
+    for proxy in proxies:
+        if proxy["kind"] != "coolify-proxy" and proxy["kind"] not in kinds:
+            continue
+        if networks is None or proxy.get("networks") is None:
+            return proxy["name"]
+        if set(networks) & set(proxy["networks"]):
+            return proxy["name"]
+    return None
+
+
+def _exposure_context(
+    asset: dict,
+    tunnels: set[str],
+    projects: dict[str, str],
+    proxies: list[dict] | None = None,
+) -> dict:
+    """Human-readable reachability of an nginx asset.
+
+    ``public_listener`` (non-loopback publish) > ``proxy_routed`` (routing labels and a
+    matching running proxy) > ``local_bind_behind_tunnel`` > ``internal_only`` (no host
+    binding, no proxy, network membership known) > ``local_only`` > ``unknown``.
+    """
     project = projects.get(asset.get("asset_id", ""), "")
     tunnel = "cloudflared" if project and project in tunnels else None
     exposure = asset.get("exposure", "unknown")
-    if exposure == "public":
+    published = asset.get("published", [])
+    bindings = _host_bindings(published)
+    proxy = _matching_proxy(asset, proxies or [])
+    networks = asset.get("networks")
+    if exposure == "public" or bindings == "public":
         summary = "public_listener"
+    elif proxy:
+        summary = "proxy_routed"
     elif exposure == "local" and tunnel:
         summary = "local_bind_behind_tunnel"
+    elif exposure == "local" and bindings == "none" and networks is not None:
+        summary = "internal_only"
     elif exposure == "local":
         summary = "local_only"
     else:
         summary = "unknown"
-    return {
+    context = {
         "summary": summary,
-        "published": asset.get("published", []),
+        "published": published,
         "tunnel": tunnel,
     }
+    if "networks" in asset or "routing_labels" in asset:
+        context.update(
+            {
+                "host_bindings": bindings,
+                "networks": networks,
+                "routing_labels": asset.get("routing_labels") or [],
+                "proxy": proxy,
+                "running_proxies": sorted(p["name"] for p in proxies or []),
+            }
+        )
+    return context
 
 
 def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
@@ -364,9 +478,10 @@ def collect_inventory(budget_seconds: float = 180.0, max_workers: int = 4):
                 break
             assets.extend(found_assets)
             gaps.extend(found_gaps)
-    for asset in assets:
-        if asset.get("product") == "nginx":
-            asset["exposure_context"] = _exposure_context(asset, tunnels, projects)
+    nginx_assets = [a for a in assets if a.get("product") == "nginx"]
+    proxies = _running_proxies(rows) if any(a.get("coolify") for a in nginx_assets) else []
+    for asset in nginx_assets:
+        asset["exposure_context"] = _exposure_context(asset, tunnels, projects, proxies)
     return {
         "observed_at": datetime.now(UTC).isoformat(),
         "assets": assets,
@@ -556,6 +671,8 @@ def _coolify_recreate_gaps(asset, advisories):
         # Recreate keeps the running image; any exposure is already an nginx case.
         return []
     recreate_version = recreate.get("nginx_version")
+    context = asset.get("exposure_context") or _exposure_context(asset, set(), {})
+    internal = context.get("summary") == "internal_only"
     base = {
         "asset_id": asset.get("asset_id"),
         "product": "nginx",
@@ -564,6 +681,11 @@ def _coolify_recreate_gaps(asset, advisories):
         "recreate_image_refs": recreate.get("image_refs", []),
         "coolify_resource": coolify.get("resource"),
         "playbook": "operations/playbooks/nginx-upgrade.md#coolify-pin",
+        "exposure_context": context,
+        # internal_only: reachable only from containers on the same docker network.
+        # Still listed (with playbook), but must not fail watch/ops-check on its own.
+        "priority": "low" if internal else "normal",
+        "blocks_status": not internal,
     }
     if not recreate_version or not VERSION.fullmatch(recreate_version):
         return [{**base, "reason": "coolify_recreate_image_unverified"}]
@@ -587,6 +709,21 @@ def _coolify_recreate_gaps(asset, advisories):
             # Minimum safe tag to pin in Coolify (highest floor across matching advisories).
             "fixed": max((h[1] for h in hits), key=_vkey),
         }
+    ]
+
+
+def blocking_coverage_gaps(gaps) -> list[dict]:
+    """Coverage gaps that need follow-up (watch exit 2 / ops-check).
+
+    ``php_runtime_unverified`` is expected noise; ``blocks_status: false`` marks
+    low-priority gaps (internal_only Coolify recreate) that stay listed only.
+    """
+    return [
+        g
+        for g in gaps or []
+        if isinstance(g, dict)
+        and g.get("reason") != "php_runtime_unverified"
+        and g.get("blocks_status") is not False
     ]
 
 

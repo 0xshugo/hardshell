@@ -61,6 +61,28 @@ pull されない限りこの古い image に戻り、CVE-2026-123007 の脆弱�
 - `coolify_recreate_reverts_nginx` — 再作成時の image の nginx が advisory の floor 未満。`fixed` が固定すべき最小タグ
 - `coolify_recreate_image_unverified` — Coolify 管理 nginx だが再作成 image を特定できない
 
+**到達性による優先度（`exposure_context`）**: gap には §4b と同じ形式の `exposure_context` が付く
+（読み取り専用の `docker ps` / `docker inspect` のみ。exec なし）。追加フィールド:
+`host_bindings`（`none` / `loopback_only` / `public`）、`networks`、`routing_labels`
+（`traefik.*` / `caddy_N*` ラベルの有無）、`proxy`（一致した稼働中プロキシ名）、`running_proxies`。
+稼働中プロキシは名前・イメージに `traefik` / `caddy` を含むもの、または `coolify-proxy`。
+ラベル種別が一致し、かつ同じ docker network に参加しているときだけ「一致」とみなす。
+
+| `exposure_context.summary` | 条件 | gap の扱い |
+|---|---|---|
+| `public_listener` | 非ループバックにポート公開 | `priority: normal`, `blocks_status: true`（従来どおり watch exit 2 / ops-check follow-up） |
+| `proxy_routed` | ルーティングラベルあり + 一致するプロキシが稼働 | 同上 |
+| `local_bind_behind_tunnel` / `local_only` / `unknown` | ループバックのみ公開、tunnel 経由、または判定不能 | 同上（保守的に従来どおり） |
+| `internal_only` | ホストバインドなし + 一致するプロキシなし + network 判定済み | `priority: low`, `blocks_status: false` |
+
+`internal_only` は同じ docker network 上のコンテナからしか到達できない（例: `smoke-nginx` は
+`80/tcp` 未公開・network `coolify` のみ・Coolify 既定の traefik/caddy ラベルはあるがプロキシ不在。
+公開エッジは別の `factory-nginx`）。gap は `coverage_gaps` に playbook リンク付きで残るが、
+それ単独では watch を exit 2 にせず、`ops-check` の `unexpected_coverage_gaps` にも数えない。
+early-warning 全体の `status` は従来から case のみで決まり、gap では `needs_review` にならない。
+Coolify proxy を起動したり、ポートを公開した時点で次回 watch から `proxy_routed` /
+`public_listener` に戻り、通常どおり follow-up 対象になる。
+
 **人間の手順（Coolify UI。エージェントは実行しない）**:
 
 1. Coolify UI → 対象 Project → Resource（gap の `coolify_resource`）を開く。
@@ -87,7 +109,8 @@ early-warning は全コンテナに `nginx -v` を試し、イメージ名が ng
 - 修正はアプリのイメージ更新（例 postiz `ghcr.io/gitroomhq/postiz-app` の新タグ）を Coolify の
   Service compose で明示タグに固定して redeploy（§4a と同じ手順）。
 - 優先度は `exposure_context.summary` を見る: `public_listener` > `local_bind_behind_tunnel`（例: postiz は
-  `127.0.0.1:8093` のみ公開、同一 compose project の cloudflared 経由で到達）> `local_only`。
+  `127.0.0.1:8093` のみ公開、同一 compose project の cloudflared 経由で到達）> `local_only`
+  > `internal_only`（§4a の表を参照。`proxy_routed` は `public_listener` と同等に扱う）。
 
 ## 5. 検証
 

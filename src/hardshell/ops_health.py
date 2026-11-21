@@ -9,6 +9,8 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from hardshell.early_warning import blocking_coverage_gaps
+
 
 def _parse_iso(value: str | None) -> datetime | None:
     if not value or not isinstance(value, str):
@@ -172,11 +174,8 @@ def evaluate_ops_health(
             age_seconds = (now - gen).total_seconds()
             feed_gaps = saved.get("feed_gaps") or []
             cov_gaps = saved.get("coverage_gaps") or []
-            unexpected_cov = [
-                g
-                for g in cov_gaps
-                if isinstance(g, dict) and g.get("reason") != "php_runtime_unverified"
-            ]
+            # Low-priority gaps (internal_only Coolify recreate) stay listed only.
+            unexpected_cov = blocking_coverage_gaps(cov_gaps)
             cases = saved.get("cases") or []
             grouped = _summarize_cases(cases)
             issues: list[str] = []
