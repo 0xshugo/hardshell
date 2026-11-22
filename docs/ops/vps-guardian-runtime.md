@@ -35,8 +35,15 @@
 |---|---|---|
 | `early-warning.json` | `build/early-warning.json` のコピー | watch 成功後（exit 0/2）の `ExecStartPost=+` |
 | `daily-latest.json` / `weekly-latest.json` | `reports/` の最新日付レポートのコピー（元ファイル名は `.daily-source` / `.weekly-source`） | 同上（scan は cron なので最大 1 watch 周期遅れ） |
-| `version.json` | 本番ツリーの git commit / branch / dirty、最後の watch の `SERVICE_RESULT` / `EXIT_STATUS` と時刻 | watch 毎回（失敗時も）の `ExecStopPost=+` |
+| `version.json` | 本番ツリーの git commit / branch / dirty、最後の watch の `SERVICE_RESULT` / `EXIT_STATUS` と時刻、各ファイルの共有結果 `share_results` | watch 毎回（失敗時も）の `ExecStopPost=+` |
 
+- 1 ファイルの上限は `HARDSHELL_SHARE_MAX_BYTES`（既定 128 MiB）。本番の daily レポートは約 27 MB。
+- `share_results` は最後の publish の結果。journal を読めない orca-control でもスキップ理由が分かる:
+  - `{"status": "ok"}` — コピー済み
+  - `{"status": "missing"}` — 元ファイルなし（例: `reports/weekly-YYYY-MM-DD.json` がまだ無い）
+  - `{"status": "skipped", "reason": "too_large", "bytes": N, "max_bytes": M}` — 上限超過。古いコピーが残る場合があるので `shared_files` の時刻も確認する
+  - `{"status": "skipped", "reason": "not_regular_file" | "unreadable" | "forbidden" | "write_failed"}`
+  - `null` — まだ publish されていない（ヘルパ更新直後など）
 - ディレクトリ `root:orca-control 0750`、ファイル `root:orca-control 0640`。shugo も orca-control も書き込めない。
 - ヘルパは root で起動されるが、元ファイルは `setpriv` で shugo 権限に落として読む。シンボリックリンクは追わない。
 - コピーは allowlist のみ。`build/state/`（Discord webhook）と `.env` / `provider.env`（AI 認証情報）は絶対にコピーしない。
@@ -55,6 +62,17 @@ sudo /home/shugo/hardshell/operations/grant-orca-readonly.sh --run-now
 `--with-journal` は `orca-control` を `systemd-journal` に追加する。これは **システム全体の journal**
 （sshd, sudo, 全ユニット）を読めるようにするため既定では付けない。ロールバック手順はスクリプトの最後に表示される。
 ヘルパ（`operations/share/hardshell-share-report.sh`）を更新したら、スクリプトを再実行して root 所有コピーを更新する。
+
+> **ヘルパ変更の PR をマージした後（オーナー作業）**: ヘルパは `/usr/local/libexec/hardshell/share-report`
+> に **コピーとして** インストールされているため、`git pull` だけでは本番に反映されない。必ず両方を実行する:
+>
+> ```sh
+> cd /home/shugo/hardshell && git pull --ff-only
+> sudo /home/shugo/hardshell/operations/grant-orca-readonly.sh --dry-run
+> sudo /home/shugo/hardshell/operations/grant-orca-readonly.sh --run-now
+> ```
+>
+> 反映後、`/var/lib/hardshell-shared/version.json` の `share_results` が `null` でなくなっていることを確認する。
 
 ### precheck の判断
 
