@@ -1,0 +1,229 @@
+# promtool unit tests. GENERATED from the rule annotations; keep exp_annotations in sync
+# (tests/test_monitoring_rules.py fails when they drift). Run:
+#   sudo operations/monitoring/apply-monitoring.sh --validate
+rule_files:
+- ../hardshell-alerts.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: hardshell_watch_last_run_timestamp{job="hardshell_watch"}
+    values: '0x120'
+  - series: hardshell_watch_cases_total{job="hardshell_watch",status="actionable"}
+    values: 0 0 1x20
+  - series: hardshell_watch_cases_total{job="hardshell_watch",status="needs_evidence"}
+    values: 4x120
+  - series: hardshell_watch_discord_failures{job="hardshell_watch"}
+    values: 0 0 2x20
+  - series: hardshell_watch_feed_gaps_total{job="hardshell_watch"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 89m
+    alertname: HardshellWatchStale
+    exp_alerts: []
+  - eval_time: 100m
+    alertname: HardshellWatchStale
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: hardshell_watch
+      exp_annotations:
+        summary: hardshell watch has not reported for more than 90 minutes
+        description: 'hardshell-watch.timer runs every 25 min; three runs were missed, so new vendor advisories
+          are not being checked. Check `systemctl status hardshell-watch.timer hardshell-watch.service`
+          and `journalctl -u hardshell-watch.service -n 50`. Runbook: docs/ops/monitoring.md#hardshellwatchstale'
+  - eval_time: 1m
+    alertname: HardshellActionableCase
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: HardshellActionableCase
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: hardshell_watch
+        status: actionable
+      exp_annotations:
+        summary: hardshell watch reports an actionable vulnerability case
+        description: 'An exposed asset runs a version with an official advisory. Open build/early-warning.json
+          (or /var/lib/hardshell-shared/early-warning.json), then follow the matching playbook under operations/playbooks/
+          with owner approval. Runbook: docs/ops/monitoring.md#hardshellactionablecase'
+  - eval_time: 5m
+    alertname: HardshellDiscordNotifyFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell_watch
+      exp_annotations:
+        summary: hardshell watch cannot deliver its own Discord notifications
+        description: 'The watch run''s Discord delivery failed or the webhook is not configured, so HIGH
+          notifications from hardshell itself are lost (Alertmanager still works). Check `.notification`
+          in build/early-warning.json and the drop-in 20-discord.conf. Runbook: docs/ops/monitoring.md#hardshelldiscordnotifyfailing'
+  - eval_time: 30m
+    alertname: HardshellFeedGaps
+    exp_alerts: []
+  - eval_time: 70m
+    alertname: HardshellFeedGaps
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell_watch
+      exp_annotations:
+        summary: hardshell watch cannot read one or more official vendor feeds
+        description: 'Feed gaps persisted for an hour; advisories from those vendors are not being matched.
+          Check `.feed_gaps` in build/early-warning.json. Runbook: docs/ops/monitoring.md#hardshellfeedgaps'
+- interval: 1m
+  input_series:
+  - series: hardshell_kev_count{job="hardshell",mode="daily"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: HardshellWatchStale
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        summary: hardshell watch has not reported for more than 90 minutes
+        description: 'hardshell-watch.timer runs every 25 min; three runs were missed, so new vendor advisories
+          are not being checked. Check `systemctl status hardshell-watch.timer hardshell-watch.service`
+          and `journalctl -u hardshell-watch.service -n 50`. Runbook: docs/ops/monitoring.md#hardshellwatchstale'
+- interval: 5m
+  input_series:
+  - series: hardshell_watch_coverage_gaps_total{job="hardshell_watch"}
+    values: 3x300 5x30
+  - series: hardshell_findings_total{job="hardshell",mode="daily",severity="critical"}
+    values: 370x300 385x30
+  - series: hardshell_kev_count{job="hardshell",mode="daily"}
+    values: 7x300 8x30
+  - series: hardshell_kev_count{job="hardshell",mode="weekly"}
+    values: 7x300 9x30
+  - series: hardshell_epss_high_count{job="hardshell",mode="daily"}
+    values: 3x300 5x30
+  alert_rule_test:
+  - eval_time: 1440m
+    alertname: HardshellCoverageGapsGrowing
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellCoverageGapsGrowing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell_watch
+      exp_annotations:
+        summary: hardshell coverage gaps increased compared with 24h ago
+        description: 'More assets could not be verified than a day ago (for example a Coolify recreate
+          reverted nginx). List them with `jq ''.coverage_gaps'' build/early-warning.json` and see docs/ops/weekly-ops.md.
+          Runbook: docs/ops/monitoring.md#hardshellcoveragegapsgrowing'
+  - eval_time: 1440m
+    alertname: HardshellNewCriticalFindings
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellNewCriticalFindings
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell
+        mode: daily
+      exp_annotations:
+        summary: daily scan found more than 10 new critical findings vs 24h ago
+        description: 'The critical count rose by more than 10 since yesterday''s daily scan (usually a
+          new image or a new CVE batch). Diff today''s and yesterday''s reports/daily-*.json and triage
+          the new items. Runbook: docs/ops/monitoring.md#hardshellnewcriticalfindings'
+  - eval_time: 1440m
+    alertname: HardshellNewKEV
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellNewKEV
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: hardshell
+        mode: daily
+      exp_annotations:
+        summary: a finding newly appeared in CISA KEV (known exploited)
+        description: 'The daily scan has more CISA KEV findings than 24h ago. Find them with `jq ''.findings[]
+          | select(.in_cisa_kev)'' reports/daily-<date>.json` and plan the fix through operations/playbooks/.
+          Runbook: docs/ops/monitoring.md#hardshellnewkev'
+  - eval_time: 1560m
+    alertname: HardshellNewHighEPSS
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell
+        mode: daily
+      exp_annotations:
+        summary: more findings with EPSS >= 0.7 than 24h ago
+        description: 'Exploitation likelihood rose for at least one finding. Find them with `jq ''.findings[]
+          | select((.epss_score // 0) >= 0.7)'' reports/daily-<date>.json`. Runbook: docs/ops/monitoring.md#hardshellnewhighepss'
+- interval: 5m
+  input_series:
+  - series: hardshell_findings_total{job="hardshell",mode="daily",severity="critical"}
+    values: 376x300 381x30
+  - series: hardshell_kev_count{job="hardshell",mode="daily"}
+    values: 7x330
+  - series: hardshell_epss_high_count{job="hardshell",mode="daily"}
+    values: 8x300 3x30
+  - series: hardshell_watch_coverage_gaps_total{job="hardshell_watch"}
+    values: 5x300 4x30
+  alert_rule_test:
+  - eval_time: 1560m
+    alertname: HardshellNewCriticalFindings
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellNewKEV
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellNewHighEPSS
+    exp_alerts: []
+  - eval_time: 1560m
+    alertname: HardshellCoverageGapsGrowing
+    exp_alerts: []
+- interval: 5m
+  input_series:
+  - series: hardshell_scan_timestamp{job="hardshell",mode="daily"}
+    values: '0x2400'
+  - series: hardshell_scan_timestamp{job="hardshell",mode="weekly"}
+    values: '0x2400'
+  alert_rule_test:
+  - eval_time: 1500m
+    alertname: HardshellScanStale
+    exp_alerts: []
+  - eval_time: 1600m
+    alertname: HardshellScanStale
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell
+        mode: daily
+      exp_annotations:
+        summary: hardshell daily scan is overdue
+        description: 'The daily scan has not pushed results in time (daily > 26h, weekly > 8d). Check
+          the root cron entry for bin/scan.sh and the latest reports/daily-*.json. Runbook: docs/ops/monitoring.md#hardshellscanstale'
+  - eval_time: 11700m
+    alertname: HardshellScanStale
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: hardshell
+        mode: daily
+      exp_annotations:
+        summary: hardshell daily scan is overdue
+        description: 'The daily scan has not pushed results in time (daily > 26h, weekly > 8d). Check
+          the root cron entry for bin/scan.sh and the latest reports/daily-*.json. Runbook: docs/ops/monitoring.md#hardshellscanstale'
+    - exp_labels:
+        severity: warning
+        job: hardshell
+        mode: weekly
+      exp_annotations:
+        summary: hardshell weekly scan is overdue
+        description: 'The weekly scan has not pushed results in time (daily > 26h, weekly > 8d). Check
+          the root cron entry for bin/scan.sh and the latest reports/weekly-*.json. Runbook: docs/ops/monitoring.md#hardshellscanstale'
+- interval: 5m
+  input_series:
+  - series: hardshell_scan_timestamp{job="hardshell",mode="daily"}
+    values: 0+300x400
+  - series: hardshell_scan_timestamp{job="hardshell",mode="weekly"}
+    values: 0+300x400
+  alert_rule_test:
+  - eval_time: 1900m
+    alertname: HardshellScanStale
+    exp_alerts: []

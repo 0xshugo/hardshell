@@ -31,6 +31,16 @@
      ```
    - PHP 搭載コンテナ（`freshrss` / `coolify`）が最新セキュリティリリース・Debian バックポートに追従しているか
    - `coverage_gaps` / `feed_gaps` や Discord 通知失敗（`notification.status`）が増えていないか
+5. **アラート健全性**（ルールと対応: [`monitoring.md`](monitoring.md)）
+   - 1 日以上発火し続けているアラートがないこと。あれば原因を直すか、閾値・ルールを見直す
+     （鳴り続けるアラートは誰も読まなくなる）
+     ```bash
+     curl -s http://127.0.0.1:9099/api/v1/alerts \
+       | jq -r --arg cut "$(date -u -d '-1 day' +%FT%TZ)" \
+           '.data.alerts[] | select(.state=="firing" and .activeAt < $cut) | "\(.labels.alertname) \(.labels.severity) since \(.activeAt)"'
+     ```
+   - 収集器が生きていること（`HostHealthPushStale` が出ていない、`systemctl list-timers hardshell-host-health.timer`）
+   - 件数の絶対値（critical / KEV / EPSS-high）は Discord に出ないので Grafana で推移を確認する
 
 ## 月次
 

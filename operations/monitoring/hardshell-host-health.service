@@ -1,0 +1,43 @@
+[Unit]
+Description=Push host and orca-server.service health metrics to Pushgateway (read-only)
+Documentation=file:///home/shugo/hardshell/docs/ops/monitoring.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=orca-control
+Group=orca-control
+# Root-owned copy installed by operations/monitoring/apply-monitoring.sh.
+ExecStart=/usr/local/libexec/hardshell/host-health-push
+TimeoutStartSec=30
+Nice=10
+CPUQuota=10%
+MemoryMax=64M
+TasksMax=32
+
+# Hardening: the collector only reads /sys/fs/cgroup, /proc, runs df and
+# `systemctl is-active`, and PUTs to 127.0.0.1:9091.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+# AF_UNIX is needed for `systemctl is-active` (D-Bus), AF_INET for the Pushgateway.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost

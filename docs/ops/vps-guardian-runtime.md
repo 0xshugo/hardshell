@@ -10,6 +10,7 @@
 | 計画 | 本 Workspace のエージェント | actionable の整理、差分案、承認待ちプレイブック | `/home` への破壊的書き込み、docker recreate |
 | 修復 | 明示承認後の `shugo` 実行枠 | プレイブック記載の docker/image 更新と検証 | `orca-control` サンドボックスからの直接修復 |
 | 通知 | watch プロセス（ルールベース） | Discord HIGH / digest（`build/state/discord.env` + drop-in `20-discord.conf`） | webhook 未設定時はスキップ（失敗にしない） |
+| 監視 | Prometheus / Alertmanager + `hardshell-host-health.timer`（`orca-control`） | ルール評価と Discord 通知、ホスト・orca-server の健全性 push（[`monitoring.md`](monitoring.md)） | 収集器からの docker 実行・root 実行 |
 
 ## パス
 
@@ -22,6 +23,8 @@
 | orca-control 向け読み取り専用コピー | `/var/lib/hardshell-shared/`（下記） |
 | 共有ヘルパ（root 所有コピー） | `/usr/local/libexec/hardshell/share-report`（元: `operations/share/hardshell-share-report.sh`） |
 | 共有 drop-in | `/etc/systemd/system/hardshell-watch.service.d/50-share-report.conf` |
+| 監視ルール（統合先） | `/home/shugo/services/aoi-system/monitoring/prometheus-alerts.yml`（元: `operations/monitoring/rules/`、手順: [`monitoring.md`](monitoring.md)） |
+| host-health 収集器（root 所有コピー） | `/usr/local/libexec/hardshell/host-health-push`（元: `operations/monitoring/host-health-push.sh`） |
 | 修復証跡 | `/home/shugo/hardshell/build/remediation/<date>-<cve>.json` |
 | CTI feeds | `/home/shugo/services/secfeed`, `/home/shugo/services/secfeed-autonomous` |
 | 公開エッジ | aoi-system `factory-nginx` |
