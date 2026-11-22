@@ -105,6 +105,11 @@ def test_collect_inventory_reads_coolify_labels_and_embedded_postiz(monkeypatch)
         "postiz": {"5000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8093"}]},
         "cloudflared-nklf": {},
     }
+    networks = {
+        "smoke-nginx": {"coolify": {}},
+        "postiz": {"nklf": {}},
+        "cloudflared-nklf": {"nklf": {}},
+    }
     nginx_v = {"smoke-nginx": "nginx/1.31.9", "postiz": "nginx/1.22.1"}
     image_inspects = []
 
@@ -126,12 +131,15 @@ def test_collect_inventory_reads_coolify_labels_and_embedded_postiz(monkeypatch)
                 return ref[name] + "\n"
             if "Config.Labels" in fmt:
                 return json.dumps(labels[name]) + "\n"
+            if "NetworkSettings.Networks" in fmt:
+                return json.dumps(networks[name]) + "\n"
             if "NetworkSettings.Ports" in fmt:
                 return json.dumps(ports[name]) + "\n"
             return image[name] + "\n"
         raise AssertionError(cmd)
 
     def fake_run(cmd, **_kw):
+        assert cmd[:2] == ["docker", "exec"]
         name, binary = cmd[2], cmd[3]
         if binary == "nginx" and name in nginx_v:
             return subprocess.CompletedProcess(cmd, 0, "", f"nginx version: {nginx_v[name]}\n")
@@ -152,7 +160,9 @@ def test_collect_inventory_reads_coolify_labels_and_embedded_postiz(monkeypatch)
         "nginx_version": "1.31.3",
     }
     assert "SECRET" not in json.dumps(smoke)
-    assert smoke["exposure_context"]["summary"] == "local_only"
+    assert smoke["exposure_context"]["summary"] == "internal_only"
+    assert smoke["exposure_context"]["networks"] == ["coolify"]
+    assert smoke["exposure_context"]["host_bindings"] == "none"
 
     postiz = by_name["postiz"]
     assert postiz["packaging"] == "embedded"
@@ -161,6 +171,11 @@ def test_collect_inventory_reads_coolify_labels_and_embedded_postiz(monkeypatch)
         "summary": "local_bind_behind_tunnel",
         "published": ["127.0.0.1:8093->5000/tcp"],
         "tunnel": "cloudflared",
+        "host_bindings": "loopback_only",
+        "networks": ["nklf"],
+        "routing_labels": [],
+        "proxy": None,
+        "running_proxies": [],
     }
     # postiz compose image equals running image: recreate keeps the same nginx.
     assert postiz["coolify"]["recreate_image"]["nginx_version"] == "1.22.1"
@@ -168,8 +183,10 @@ def test_collect_inventory_reads_coolify_labels_and_embedded_postiz(monkeypatch)
     for asset in inv["assets"]:
         asset["observed_at"] = NOW.isoformat()  # align with fixed intel clock
     result = build_report(nginx_intel(), {**inv, "gaps": []}, NOW)
-    reasons = [g["reason"] for g in result["coverage_gaps"]]
-    assert reasons == ["coolify_recreate_reverts_nginx"]
+    (gap,) = result["coverage_gaps"]
+    assert gap["reason"] == "coolify_recreate_reverts_nginx"
+    assert gap["exposure_context"]["summary"] == "internal_only"
+    assert gap["blocks_status"] is False
     assert {c["asset_id"] for c in result["cases"]} == {"postiz"}
 
 

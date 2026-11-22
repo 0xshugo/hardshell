@@ -506,7 +506,7 @@ async def _run_watch(inventory_path, output, ai):
     import time
     from datetime import UTC, datetime
 
-    from hardshell.early_warning import build_report, collect_inventory
+    from hardshell.early_warning import blocking_coverage_gaps, build_report, collect_inventory
     from hardshell.intel.vendor import fetch_nginx, fetch_php
 
     state = _guardian_root() / "build" / "state"
@@ -691,9 +691,7 @@ async def _run_watch(inventory_path, output, ai):
     ):
         console.print("AI call failed; cases retained for review")
         raise typer.Exit(3)
-    if result["feed_gaps"] or any(
-        gap.get("reason") != "php_runtime_unverified" for gap in result.get("coverage_gaps", [])
-    ):
+    if result["feed_gaps"] or blocking_coverage_gaps(result.get("coverage_gaps")):
         raise typer.Exit(2)
 
 
