@@ -1,0 +1,11 @@
+[Unit]
+Description=Push host and orca-server.service health every 60s
+Documentation=file:///home/shugo/hardshell/docs/ops/monitoring.md
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

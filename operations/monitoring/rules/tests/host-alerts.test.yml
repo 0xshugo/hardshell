@@ -1,0 +1,244 @@
+# promtool unit tests. GENERATED from the rule annotations; keep exp_annotations in sync
+# (tests/test_monitoring_rules.py fails when they drift). Run:
+#   sudo operations/monitoring/apply-monitoring.sh --validate
+rule_files:
+- ../host-alerts.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: push_time_seconds{job="host_health"}
+    values: '0x20'
+  - series: host_health_orca_server_cgroup_readable{job="host_health"}
+    values: '0x20'
+  - series: orca_server_pids_current{job="host_health"}
+    values: 150x20
+  - series: orca_server_pids_max{job="host_health"}
+    values: 160x20
+  - series: orca_server_pids_events_max_total{job="host_health"}
+    values: 0x10 5x10
+  - series: orca_server_memory_anon_bytes{job="host_health"}
+    values: 5600000000x20
+  - series: orca_server_memory_max_bytes{job="host_health"}
+    values: 6442450944x20
+  - series: orca_server_memory_events_oom_kill_total{job="host_health"}
+    values: 0x5 1x15
+  - series: host_rootfs_used_ratio{job="host_health"}
+    values: 0.88x20
+  - series: host_memory_available_ratio{job="host_health"}
+    values: 0.05x20
+  - series: systemd_unit_active{job="host_health",unit="orca-server.service"}
+    values: '0x20'
+  - series: systemd_unit_active{job="host_health",unit="hardshell-watch.timer"}
+    values: '0x20'
+  - series: systemd_unit_active{job="host_health",unit="docker.service"}
+    values: 1x20
+  - series: systemd_unit_active{job="host_health",unit="secfeed-monitor.timer"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: HostHealthPushStale
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: HostHealthPushStale
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+      exp_annotations:
+        summary: host-health collector has not pushed for more than 5 minutes
+        description: 'Every other host_health_alerts rule is blind until this resolves. Check `systemctl
+          status hardshell-host-health.timer hardshell-host-health.service` and `journalctl -u hardshell-host-health.service
+          -n 20`. Runbook: docs/ops/monitoring.md#hosthealthpushstale'
+  - eval_time: 15m
+    alertname: OrcaServerCgroupUnreadable
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: orca-server.service cgroup files are not readable
+        description: 'The collector cannot read /sys/fs/cgroup/system.slice/orca-server.service, so the
+          OrcaServer* alerts cannot fire. Usually orca-server.service is stopped; see the collector''s
+          journal for the reason. Runbook: docs/ops/monitoring.md#orcaservercgroupunreadable'
+  - eval_time: 3m
+    alertname: OrcaServerTasksNearLimit
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: OrcaServerTasksNearLimit
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: orca-server.service uses more than 80% of TasksMax
+        description: 'New threads/processes fail with EAGAIN once TasksMax is reached. Look for runaway
+          agents (`systemctl status orca-server.service`) and raise TasksMax in the unit drop-in if the
+          load is legitimate. Runbook: docs/ops/monitoring.md#orcaservertasksnearlimit'
+  - eval_time: 9m
+    alertname: OrcaServerTasksLimitHit
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: OrcaServerTasksLimitHit
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: orca-server.service hit TasksMax in the last 10 minutes
+        description: 'pids.events max increased: a fork/clone inside orca-server.service was refused.
+          Check what spawned the tasks and consider raising TasksMax. Runbook: docs/ops/monitoring.md#orcaservertaskslimithit'
+  - eval_time: 5m
+    alertname: OrcaServerMemoryNearLimit
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: OrcaServerMemoryNearLimit
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: orca-server.service anonymous memory is above 85% of MemoryMax
+        description: 'Uses anon memory (page cache is reclaimable and ignored). The kernel will OOM-kill
+          inside the service at MemoryMax. Find the large agent processes and consider raising MemoryMax.
+          Runbook: docs/ops/monitoring.md#orcaservermemorynearlimit'
+  - eval_time: 8m
+    alertname: OrcaServerOOMKill
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+      exp_annotations:
+        summary: the kernel OOM-killed a process inside orca-server.service
+        description: 'memory.events oom_kill increased in the last 10 minutes; an agent or the server
+          itself was killed. Check `journalctl -k | grep -i oom` and MemoryMax. Runbook: docs/ops/monitoring.md#orcaserveroomkill'
+  - eval_time: 15m
+    alertname: HostRootDiskHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: root filesystem is more than 85% full
+        description: 'Free space with `docker system df`, old reports under /home/shugo/hardshell/reports
+          and journal vacuum. Runbook: docs/ops/monitoring.md#hostrootdiskhigh'
+  - eval_time: 15m
+    alertname: HostMemoryAvailableLow
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: host_health
+      exp_annotations:
+        summary: host MemAvailable is below 10% of MemTotal
+        description: 'The host is close to the global OOM killer. Check the largest consumers with `systemd-cgtop
+          -m` and cadvisor in Grafana. Runbook: docs/ops/monitoring.md#hostmemoryavailablelow'
+  - eval_time: 10m
+    alertname: SystemdUnitInactive
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+        unit: orca-server.service
+      exp_annotations:
+        summary: orca-server.service is not active
+        description: '`systemctl is-active orca-server.service` has not been active for 5 minutes. Check
+          `systemctl status orca-server.service` and its journal before restarting. Runbook: docs/ops/monitoring.md#systemdunitinactive'
+    - exp_labels:
+        severity: warning
+        job: host_health
+        unit: hardshell-watch.timer
+      exp_annotations:
+        summary: hardshell-watch.timer is not active
+        description: '`systemctl is-active hardshell-watch.timer` has not been active for 5 minutes, so
+          its job no longer runs. Check `systemctl status hardshell-watch.timer` and `systemctl list-timers`.
+          Runbook: docs/ops/monitoring.md#systemdunitinactive'
+- interval: 1m
+  input_series:
+  - series: push_time_seconds{job="host_health"}
+    values: 0+60x20
+  - series: orca_server_pids_current{job="host_health"}
+    values: 158x20
+  - series: orca_server_pids_max{job="host_health"}
+    values: 160x20
+  - series: host_rootfs_used_ratio{job="host_health"}
+    values: 0.95x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: HostHealthPushStale
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: OrcaServerTasksNearLimit
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+      exp_annotations:
+        summary: orca-server.service uses more than 95% of TasksMax
+        description: 'New threads/processes fail with EAGAIN once TasksMax is reached. Look for runaway
+          agents (`systemctl status orca-server.service`) and raise TasksMax in the unit drop-in if the
+          load is legitimate. Runbook: docs/ops/monitoring.md#orcaservertasksnearlimit'
+  - eval_time: 10m
+    alertname: HostRootDiskHigh
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+      exp_annotations:
+        summary: root filesystem is more than 92% full
+        description: 'Docker, Prometheus and journald fail when / fills up. Free space now with `docker
+          system df`, old reports and journal vacuum. Runbook: docs/ops/monitoring.md#hostrootdiskhigh'
+- interval: 1m
+  input_series:
+  - series: push_time_seconds{job="host_health"}
+    values: 0+60x20
+  - series: host_health_orca_server_cgroup_readable{job="host_health"}
+    values: 1x20
+  - series: orca_server_pids_current{job="host_health"}
+    values: 40x20
+  - series: orca_server_pids_max{job="host_health"}
+    values: 1024x20
+  - series: orca_server_memory_current_bytes{job="host_health"}
+    values: 6000000000x20
+  - series: orca_server_memory_anon_bytes{job="host_health"}
+    values: 1500000000x20
+  - series: orca_server_memory_max_bytes{job="host_health"}
+    values: 6442450944x20
+  - series: host_rootfs_used_ratio{job="host_health"}
+    values: 0.47x20
+  - series: host_memory_available_ratio{job="host_health"}
+    values: 0.6x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: HostHealthPushStale
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: OrcaServerCgroupUnreadable
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: OrcaServerTasksNearLimit
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: OrcaServerMemoryNearLimit
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: HostRootDiskHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: HostMemoryAvailableLow
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: hardshell_kev_count{job="hardshell",mode="daily"}
+    values: 7x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: HostHealthPushStale
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: host_health
+      exp_annotations:
+        summary: host-health collector has not pushed for more than 5 minutes
+        description: 'Every other host_health_alerts rule is blind until this resolves. Check `systemctl
+          status hardshell-host-health.timer hardshell-host-health.service` and `journalctl -u hardshell-host-health.service
+          -n 20`. Runbook: docs/ops/monitoring.md#hosthealthpushstale'

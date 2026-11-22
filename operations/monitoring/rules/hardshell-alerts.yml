@@ -1,0 +1,140 @@
+# HardShell alert rules (Prometheus rule-file format).
+#
+# Replaces the `hardshell_alerts` group in
+#   /home/shugo/services/aoi-system/monitoring/prometheus-alerts.yml
+# (mounted into task-prometheus as /etc/prometheus/alerts/alerts.yml).
+# Install: operations/monitoring/apply-monitoring.sh. Runbook: docs/ops/monitoring.md.
+#
+# Design rules:
+# - Every alert reaches Discord, so severity is only `critical` or `warning`
+#   (Alertmanager routes nothing else).
+# - No alert on absolute finding counts: production permanently carries hundreds of
+#   critical findings, so those alerts were always firing and carried no information.
+#   Scan results alert only when they get worse than 24h earlier.
+# - Annotations use only $labels (no $value) so promtool unit tests stay exact.
+#
+# Metric sources (names are checked by tests/test_monitoring_rules.py):
+#   hardshell_watch_*                      src/hardshell/watch_metrics.py (job hardshell_watch)
+#   hardshell_findings_total, *_count,
+#   hardshell_scan_timestamp               bin/metrics.sh (job hardshell, label mode=daily|weekly)
+groups:
+  - name: hardshell_alerts
+    rules:
+      # --- hardshell watch (early warning, every 25 min) -------------------------------------
+      - alert: HardshellWatchStale
+        expr: >-
+          (time() - hardshell_watch_last_run_timestamp > 5400)
+          or absent(hardshell_watch_last_run_timestamp)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: hardshell watch has not reported for more than 90 minutes
+          description: >-
+            hardshell-watch.timer runs every 25 min; three runs were missed, so new vendor
+            advisories are not being checked. Check `systemctl status hardshell-watch.timer
+            hardshell-watch.service` and `journalctl -u hardshell-watch.service -n 50`.
+            Runbook: docs/ops/monitoring.md#hardshellwatchstale
+
+      - alert: HardshellActionableCase
+        expr: hardshell_watch_cases_total{status="actionable"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: hardshell watch reports an actionable vulnerability case
+          description: >-
+            An exposed asset runs a version with an official advisory. Open
+            build/early-warning.json (or /var/lib/hardshell-shared/early-warning.json),
+            then follow the matching playbook under operations/playbooks/ with owner
+            approval. Runbook: docs/ops/monitoring.md#hardshellactionablecase
+
+      - alert: HardshellDiscordNotifyFailing
+        expr: hardshell_watch_discord_failures > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: hardshell watch cannot deliver its own Discord notifications
+          description: >-
+            The watch run's Discord delivery failed or the webhook is not configured, so
+            HIGH notifications from hardshell itself are lost (Alertmanager still works).
+            Check `.notification` in build/early-warning.json and the drop-in
+            20-discord.conf. Runbook: docs/ops/monitoring.md#hardshelldiscordnotifyfailing
+
+      - alert: HardshellFeedGaps
+        expr: hardshell_watch_feed_gaps_total > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: hardshell watch cannot read one or more official vendor feeds
+          description: >-
+            Feed gaps persisted for an hour; advisories from those vendors are not being
+            matched. Check `.feed_gaps` in build/early-warning.json.
+            Runbook: docs/ops/monitoring.md#hardshellfeedgaps
+
+      - alert: HardshellCoverageGapsGrowing
+        expr: hardshell_watch_coverage_gaps_total > hardshell_watch_coverage_gaps_total offset 1d
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: hardshell coverage gaps increased compared with 24h ago
+          description: >-
+            More assets could not be verified than a day ago (for example a Coolify
+            recreate reverted nginx). List them with `jq '.coverage_gaps' build/early-warning.json`
+            and see docs/ops/weekly-ops.md. Runbook: docs/ops/monitoring.md#hardshellcoveragegapsgrowing
+
+      # --- scans (bin/scan.sh via root cron: daily 06:00, weekly Sunday 07:00) ---------------
+      # Each mode is its own parenthesised comparison so `or` never mixes them up.
+      - alert: HardshellScanStale
+        expr: >-
+          (time() - hardshell_scan_timestamp{mode="daily"} > 93600)
+          or
+          (time() - hardshell_scan_timestamp{mode="weekly"} > 691200)
+        labels:
+          severity: warning
+        annotations:
+          summary: "hardshell {{ $labels.mode }} scan is overdue"
+          description: >-
+            The {{ $labels.mode }} scan has not pushed results in time (daily > 26h,
+            weekly > 8d). Check the root cron entry for bin/scan.sh and the latest
+            reports/{{ $labels.mode }}-*.json. Runbook: docs/ops/monitoring.md#hardshellscanstale
+
+      # Change-based replacements for the old always-firing absolute-count alerts.
+      - alert: HardshellNewCriticalFindings
+        expr: >-
+          hardshell_findings_total{mode="daily",severity="critical"}
+          - hardshell_findings_total{mode="daily",severity="critical"} offset 1d
+          > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: daily scan found more than 10 new critical findings vs 24h ago
+          description: >-
+            The critical count rose by more than 10 since yesterday's daily scan (usually a
+            new image or a new CVE batch). Diff today's and yesterday's reports/daily-*.json
+            and triage the new items. Runbook: docs/ops/monitoring.md#hardshellnewcriticalfindings
+
+      - alert: HardshellNewKEV
+        expr: hardshell_kev_count{mode="daily"} > hardshell_kev_count{mode="daily"} offset 1d
+        labels:
+          severity: critical
+        annotations:
+          summary: a finding newly appeared in CISA KEV (known exploited)
+          description: >-
+            The daily scan has more CISA KEV findings than 24h ago. Find them with
+            `jq '.findings[] | select(.in_cisa_kev)' reports/daily-<date>.json` and plan the
+            fix through operations/playbooks/. Runbook: docs/ops/monitoring.md#hardshellnewkev
+
+      - alert: HardshellNewHighEPSS
+        expr: hardshell_epss_high_count{mode="daily"} > hardshell_epss_high_count{mode="daily"} offset 1d
+        labels:
+          severity: warning
+        annotations:
+          summary: more findings with EPSS >= 0.7 than 24h ago
+          description: >-
+            Exploitation likelihood rose for at least one finding. Find them with
+            `jq '.findings[] | select((.epss_score // 0) >= 0.7)' reports/daily-<date>.json`.
+            Runbook: docs/ops/monitoring.md#hardshellnewhighepss

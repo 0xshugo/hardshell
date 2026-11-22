@@ -1,0 +1,158 @@
+# Host and orca-server.service alert rules (Prometheus rule-file format).
+#
+# Metrics come from operations/monitoring/host-health-push.sh, pushed every 60s to the
+# Pushgateway as job `host_health` by hardshell-host-health.timer. Append this group to
+#   /home/shugo/services/aoi-system/monitoring/prometheus-alerts.yml
+# Install: operations/monitoring/apply-monitoring.sh. Runbook: docs/ops/monitoring.md.
+#
+# Severity is only `critical` or `warning` (the only values Alertmanager routes to Discord).
+# Annotations use only $labels (no $value) so promtool unit tests stay exact.
+groups:
+  - name: host_health_alerts
+    rules:
+      # --- dead-man switch for the collector itself -----------------------------------------
+      - alert: HostHealthPushStale
+        expr: >-
+          (time() - push_time_seconds{job="host_health"} > 300)
+          or absent(push_time_seconds{job="host_health"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: host-health collector has not pushed for more than 5 minutes
+          description: >-
+            Every other host_health_alerts rule is blind until this resolves. Check
+            `systemctl status hardshell-host-health.timer hardshell-host-health.service` and
+            `journalctl -u hardshell-host-health.service -n 20`.
+            Runbook: docs/ops/monitoring.md#hosthealthpushstale
+
+      - alert: OrcaServerCgroupUnreadable
+        expr: host_health_orca_server_cgroup_readable == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service cgroup files are not readable
+          description: >-
+            The collector cannot read /sys/fs/cgroup/system.slice/orca-server.service, so the
+            OrcaServer* alerts cannot fire. Usually orca-server.service is stopped; see the
+            collector's journal for the reason. Runbook: docs/ops/monitoring.md#orcaservercgroupunreadable
+
+      # --- orca-server.service limits -------------------------------------------------------
+      - alert: OrcaServerTasksNearLimit
+        expr: (orca_server_pids_current / orca_server_pids_max > 0.8) <= 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service uses more than 80% of TasksMax
+          description: >-
+            New threads/processes fail with EAGAIN once TasksMax is reached. Look for runaway
+            agents (`systemctl status orca-server.service`) and raise TasksMax in the unit
+            drop-in if the load is legitimate. Runbook: docs/ops/monitoring.md#orcaservertasksnearlimit
+
+      - alert: OrcaServerTasksNearLimit
+        expr: orca_server_pids_current / orca_server_pids_max > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: orca-server.service uses more than 95% of TasksMax
+          description: >-
+            New threads/processes fail with EAGAIN once TasksMax is reached. Look for runaway
+            agents (`systemctl status orca-server.service`) and raise TasksMax in the unit
+            drop-in if the load is legitimate. Runbook: docs/ops/monitoring.md#orcaservertasksnearlimit
+
+      - alert: OrcaServerTasksLimitHit
+        expr: increase(orca_server_pids_events_max_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service hit TasksMax in the last 10 minutes
+          description: >-
+            pids.events max increased: a fork/clone inside orca-server.service was refused.
+            Check what spawned the tasks and consider raising TasksMax.
+            Runbook: docs/ops/monitoring.md#orcaservertaskslimithit
+
+      - alert: OrcaServerMemoryNearLimit
+        expr: orca_server_memory_anon_bytes / orca_server_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service anonymous memory is above 85% of MemoryMax
+          description: >-
+            Uses anon memory (page cache is reclaimable and ignored). The kernel will
+            OOM-kill inside the service at MemoryMax. Find the large agent processes and
+            consider raising MemoryMax. Runbook: docs/ops/monitoring.md#orcaservermemorynearlimit
+
+      - alert: OrcaServerOOMKill
+        expr: increase(orca_server_memory_events_oom_kill_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: the kernel OOM-killed a process inside orca-server.service
+          description: >-
+            memory.events oom_kill increased in the last 10 minutes; an agent or the server
+            itself was killed. Check `journalctl -k | grep -i oom` and MemoryMax.
+            Runbook: docs/ops/monitoring.md#orcaserveroomkill
+
+      # --- host -----------------------------------------------------------------------------
+      - alert: HostRootDiskHigh
+        expr: (host_rootfs_used_ratio > 0.85) <= 0.92
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: root filesystem is more than 85% full
+          description: >-
+            Free space with `docker system df`, old reports under /home/shugo/hardshell/reports
+            and journal vacuum. Runbook: docs/ops/monitoring.md#hostrootdiskhigh
+
+      - alert: HostRootDiskHigh
+        expr: host_rootfs_used_ratio > 0.92
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: root filesystem is more than 92% full
+          description: >-
+            Docker, Prometheus and journald fail when / fills up. Free space now with
+            `docker system df`, old reports and journal vacuum.
+            Runbook: docs/ops/monitoring.md#hostrootdiskhigh
+
+      - alert: HostMemoryAvailableLow
+        expr: host_memory_available_ratio < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: host MemAvailable is below 10% of MemTotal
+          description: >-
+            The host is close to the global OOM killer. Check the largest consumers with
+            `systemd-cgtop -m` and cadvisor in Grafana. Runbook: docs/ops/monitoring.md#hostmemoryavailablelow
+
+      # --- systemd units (pushed 0/1 from `systemctl is-active`; timers report active) --------
+      - alert: SystemdUnitInactive
+        expr: systemd_unit_active{unit=~".+\\.service"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.unit }} is not active"
+          description: >-
+            `systemctl is-active {{ $labels.unit }}` has not been active for 5 minutes. Check
+            `systemctl status {{ $labels.unit }}` and its journal before restarting.
+            Runbook: docs/ops/monitoring.md#systemdunitinactive
+
+      - alert: SystemdUnitInactive
+        expr: systemd_unit_active{unit=~".+\\.timer"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.unit }} is not active"
+          description: >-
+            `systemctl is-active {{ $labels.unit }}` has not been active for 5 minutes, so its
+            job no longer runs. Check `systemctl status {{ $labels.unit }}` and
+            `systemctl list-timers`. Runbook: docs/ops/monitoring.md#systemdunitinactive
