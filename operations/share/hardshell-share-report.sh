@@ -24,7 +24,15 @@
 #   HARDSHELL_SHARED_DIR    /var/lib/hardshell-shared
 #   HARDSHELL_OWNER         owner of $HARDSHELL_HOME (shugo)
 #   HARDSHELL_SHARED_GROUP  orca-control
-#   HARDSHELL_SHARE_MAX_BYTES  per-file size cap (default 20 MiB)
+#   HARDSHELL_SHARE_MAX_BYTES  per-file size cap (default 128 MiB; daily reports
+#                              are ~27 MB in production)
+#
+# publish records each file's outcome in $SHARED_DIR/.result-<name> and status
+# copies them into version.json "share_results", so a skipped file is visible to
+# orca-control without the journal:
+#   {"status": "ok"} | {"status": "missing"}
+#   {"status": "skipped", "reason": "too_large", "bytes": N}
+#   {"status": "skipped", "reason": "not_regular_file" | "unreadable" | "forbidden" | "write_failed"}
 set -uo pipefail
 umask 077
 
@@ -33,7 +41,9 @@ REPORT_DIR="${HARDSHELL_REPORT_DIR:-$HARDSHELL_HOME/reports}"
 SHARED_DIR="${HARDSHELL_SHARED_DIR:-/var/lib/hardshell-shared}"
 OWNER="${HARDSHELL_OWNER:-$(stat -c %U "$HARDSHELL_HOME" 2>/dev/null || echo shugo)}"
 SHARED_GROUP="${HARDSHELL_SHARED_GROUP:-orca-control}"
-MAX_BYTES="${HARDSHELL_SHARE_MAX_BYTES:-20971520}"
+MAX_BYTES="${HARDSHELL_SHARE_MAX_BYTES:-134217728}"
+[[ "$MAX_BYTES" =~ ^[0-9]+$ ]] || MAX_BYTES=134217728
+SHARED_NAMES=(early-warning.json daily-latest.json weekly-latest.json)
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 log() { echo "hardshell-share-report: $*" >&2; }
@@ -60,35 +70,65 @@ is_forbidden_source() {
   return 1
 }
 
+# place_private <tmp> <dest>: make a 0640 root:<group> file and move it into place.
+place_private() {
+  chmod 0640 "$1"
+  if is_root; then chown "root:$SHARED_GROUP" "$1"; fi
+  mv -f -- "$1" "$2"
+}
+
+# record_result <name> <status> [reason] [bytes]: remember a publish outcome for status.
+# Stored as one "status reason bytes" line; status re-validates it before emitting JSON.
+record_result() {
+  local name="$1" tmp
+  tmp="$(mktemp "$SHARED_DIR/.result-${name}.XXXXXX")" || return 0
+  printf '%s %s %s\n' "$2" "${3:--}" "${4:--}" >"$tmp"
+  place_private "$tmp" "$SHARED_DIR/.result-${name}" || rm -f -- "$tmp"
+}
+
 # install_shared <source> <name>: atomically place a 0640 root:<group> copy in SHARED_DIR.
 install_shared() {
   local src="$1" name="$2" tmp size
   if is_forbidden_source "$src"; then
     log "refusing forbidden source $src"
+    record_result "$name" skipped forbidden
+    return 1
+  fi
+  if [[ ! -e "$src" && ! -L "$src" ]]; then
+    log "skip $name: $src is missing"
+    record_result "$name" missing
     return 1
   fi
   if [[ -L "$src" || ! -f "$src" ]]; then
-    log "skip $name: $src is missing, not a regular file, or a symlink"
+    log "skip $name: $src is not a regular file, or a symlink"
+    record_result "$name" skipped not_regular_file
     return 1
   fi
-  tmp="$(mktemp "$SHARED_DIR/.${name}.XXXXXX")" || return 1
+  if ! tmp="$(mktemp "$SHARED_DIR/.${name}.XXXXXX")"; then
+    record_result "$name" skipped write_failed
+    return 1
+  fi
   if ! as_owner head -c "$((MAX_BYTES + 1))" -- "$src" >"$tmp"; then
     log "skip $name: cannot read $src as $OWNER"
     rm -f -- "$tmp"
+    record_result "$name" skipped unreadable
     return 1
   fi
   size="$(stat -c %s "$tmp")"
   if [[ "$size" -gt "$MAX_BYTES" ]]; then
-    log "skip $name: larger than $MAX_BYTES bytes"
     rm -f -- "$tmp"
+    size="$(as_owner stat -c %s -- "$src" 2>/dev/null)" || size=""
+    log "skip $name: ${size:-?} bytes is larger than $MAX_BYTES bytes (HARDSHELL_SHARE_MAX_BYTES)"
+    record_result "$name" skipped too_large "$size"
     return 1
   fi
-  chmod 0640 "$tmp"
-  if is_root; then
-    chown "root:$SHARED_GROUP" "$tmp"
-  fi
   touch -r "$src" "$tmp" 2>/dev/null || true
-  mv -f -- "$tmp" "$SHARED_DIR/$name"
+  if ! place_private "$tmp" "$SHARED_DIR/$name"; then
+    rm -f -- "$tmp"
+    record_result "$name" skipped write_failed
+    return 1
+  fi
+  record_result "$name" ok
 }
 
 latest_report() {
@@ -104,13 +144,39 @@ cmd_publish() {
   install_shared "$HARDSHELL_HOME/build/early-warning.json" early-warning.json || true
   local mode src
   for mode in daily weekly; do
-    src="$(latest_report "$mode")" || continue
+    if ! src="$(latest_report "$mode")"; then
+      log "skip $mode-latest.json: no $mode-YYYY-MM-DD.json in $REPORT_DIR"
+      record_result "$mode-latest.json" missing
+      continue
+    fi
     install_shared "$src" "$mode-latest.json" || continue
     # Record which dated report the stable name points to.
     printf '%s\n' "$(basename -- "$src")" >"$SHARED_DIR/.${mode}-source"
     chmod 0640 "$SHARED_DIR/.${mode}-source"
     if is_root; then chown "root:$SHARED_GROUP" "$SHARED_DIR/.${mode}-source"; fi
   done
+}
+
+# share_result_json <name>: emit the recorded publish outcome as a JSON object (or null).
+# Every field is checked against a fixed vocabulary so version.json stays sanitized.
+share_result_json() {
+  local status="" reason="" bytes="" out
+  read -r status reason bytes _ <"$SHARED_DIR/.result-$1" 2>/dev/null || true
+  case "$status" in
+    ok | missing) printf '{"status": "%s"}' "$status"; return ;;
+    skipped) ;;
+    *) printf 'null'; return ;;
+  esac
+  case "$reason" in
+    too_large | not_regular_file | unreadable | forbidden | write_failed) ;;
+    *) reason=unknown ;;
+  esac
+  out="{\"status\": \"skipped\", \"reason\": \"$reason\""
+  if [[ "$reason" == too_large ]]; then
+    if [[ "$bytes" =~ ^[0-9]{1,18}$ ]]; then out+=", \"bytes\": $((10#$bytes))"; else out+=', "bytes": null'; fi
+    out+=", \"max_bytes\": $MAX_BYTES"
+  fi
+  printf '%s}' "$out"
 }
 
 # Keep only characters that are safe inside a JSON string without escaping.
@@ -164,6 +230,13 @@ cmd_status() {
     printf '  "report_sources": {\n'
     printf '    "daily": %s,\n' "$(json_str_or_null "$(cat "$SHARED_DIR/.daily-source" 2>/dev/null)")"
     printf '    "weekly": %s\n' "$(json_str_or_null "$(cat "$SHARED_DIR/.weekly-source" 2>/dev/null)")"
+    printf '  },\n'
+    printf '  "share_results": {\n'
+    local i last=$((${#SHARED_NAMES[@]} - 1))
+    for i in "${!SHARED_NAMES[@]}"; do
+      printf '    "%s": %s' "${SHARED_NAMES[$i]}" "$(share_result_json "${SHARED_NAMES[$i]}")"
+      if [[ "$i" -lt "$last" ]]; then printf ',\n'; else printf '\n'; fi
+    done
     printf '  }\n'
     printf '}\n'
   } >"$tmp"

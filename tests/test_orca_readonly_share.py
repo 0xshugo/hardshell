@@ -218,6 +218,104 @@ def test_share_status_without_git_is_null(prod_tree):
     assert version["watch"]["exit_status"] == 1
 
 
+def _version(home: Path, shared: Path, **env: str) -> dict:
+    res = _share(home, shared, "status", **env)
+    assert res.returncode == 0, res.stderr
+    return json.loads((shared / "version.json").read_text())
+
+
+def test_share_results_ok_for_every_published_file(prod_tree):
+    home, shared = prod_tree
+    _share(home, shared, "publish")
+    results = _version(home, shared)["share_results"]
+    assert results == {
+        "early-warning.json": {"status": "ok"},
+        "daily-latest.json": {"status": "ok"},
+        "weekly-latest.json": {"status": "ok"},
+    }
+
+
+def test_default_cap_shares_production_sized_daily_report(prod_tree):
+    # Production daily reports are ~27 MB; the old 20 MiB default skipped them.
+    home, shared = prod_tree
+    big = home / "reports" / "daily-2026-11-22.json"
+    with big.open("wb") as fh:
+        fh.write(b'{"pad": "')
+        fh.write(b"x" * 27_557_200)
+        fh.write(b'"}')
+    _share(home, shared, "publish")
+    assert (shared / "daily-latest.json").stat().st_size == big.stat().st_size
+    version = _version(home, shared)
+    assert version["share_results"]["daily-latest.json"] == {"status": "ok"}
+    assert version["report_sources"]["daily"] == "daily-2026-11-22.json"
+    assert version["shared_files"]["daily-latest.json"]
+
+
+def test_share_results_record_too_large_skip(prod_tree):
+    home, shared = prod_tree
+    (home / "reports" / "daily-2026-11-21.json").write_text('{"day": 21, "pad": "xxxxxxxx"}')
+    size = (home / "reports" / "daily-2026-11-21.json").stat().st_size
+    res = _share(home, shared, "publish", HARDSHELL_SHARE_MAX_BYTES="25")
+    assert res.returncode == 0
+    assert "HARDSHELL_SHARE_MAX_BYTES" in res.stderr
+    assert not (shared / "daily-latest.json").exists()
+    version = _version(home, shared, HARDSHELL_SHARE_MAX_BYTES="25")
+    assert version["share_results"]["daily-latest.json"] == {
+        "status": "skipped",
+        "reason": "too_large",
+        "bytes": size,
+        "max_bytes": 25,
+    }
+    assert version["shared_files"]["daily-latest.json"] is None
+    assert version["share_results"]["weekly-latest.json"] == {"status": "ok"}
+
+
+def test_share_results_mark_missing_weekly_report(prod_tree):
+    home, shared = prod_tree
+    (home / "reports" / "weekly-2026-11-16.json").unlink()
+    _share(home, shared, "publish")
+    results = _version(home, shared)["share_results"]
+    assert results["weekly-latest.json"] == {"status": "missing"}
+    assert results["daily-latest.json"] == {"status": "ok"}
+
+
+def test_share_results_mark_missing_early_warning(prod_tree):
+    home, shared = prod_tree
+    (home / "build" / "early-warning.json").unlink()
+    _share(home, shared, "publish")
+    assert _version(home, shared)["share_results"]["early-warning.json"] == {"status": "missing"}
+
+
+def test_share_results_mark_symlink_as_skipped(prod_tree):
+    home, shared = prod_tree
+    secret = home / "build" / "state" / "discord.env"
+    (home / "reports" / "daily-2026-11-21.json").symlink_to(secret)
+    _share(home, shared, "publish")
+    result = _version(home, shared)["share_results"]["daily-latest.json"]
+    assert result == {"status": "skipped", "reason": "not_regular_file"}
+
+
+def test_share_results_null_before_first_publish(prod_tree):
+    home, shared = prod_tree
+    results = _version(home, shared)["share_results"]
+    assert results == {
+        "early-warning.json": None,
+        "daily-latest.json": None,
+        "weekly-latest.json": None,
+    }
+
+
+def test_share_results_sanitize_tampered_state(prod_tree):
+    home, shared = prod_tree
+    (shared / ".result-daily-latest.json").write_text('skipped "evil\\ 9e99\n')
+    (shared / ".result-weekly-latest.json").write_text('pwned" x y\n')
+    (shared / ".result-early-warning.json").write_text("skipped too_large 12abc\n")
+    results = _version(home, shared)["share_results"]
+    assert results["daily-latest.json"] == {"status": "skipped", "reason": "unknown"}
+    assert results["weekly-latest.json"] is None
+    assert results["early-warning.json"]["bytes"] is None
+
+
 def test_share_is_noop_when_shared_dir_missing(prod_tree, tmp_path):
     home, _ = prod_tree
     res = _share(home, tmp_path / "missing", "publish")
