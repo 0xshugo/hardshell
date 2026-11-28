@@ -83,7 +83,7 @@ keyed_value() {
 
 # --- orca-server.service cgroup -----------------------------------------------------------
 collect_cgroup() {
-  local pids_cur pids_max pids_ev mem_cur mem_max mem_anon mem_ev_max mem_ev_oom
+  local pids_cur pids_max pids_ev mem_cur mem_max mem_high mem_anon mem_ev_max mem_ev_high mem_ev_oom
   if [[ ! -d "$CGROUP_DIR" ]]; then
     log "cgroup dir missing: $CGROUP_DIR (orca-server.service not running?); skipping orca_server_* metrics"
     return 1
@@ -92,6 +92,7 @@ collect_cgroup() {
   pids_max="$(read_line "$CGROUP_DIR/pids.max")"
   mem_cur="$(read_line "$CGROUP_DIR/memory.current")"
   mem_max="$(read_line "$CGROUP_DIR/memory.max")"
+  mem_high="$(read_line "$CGROUP_DIR/memory.high")" || mem_high=""
   if ! is_uint "$pids_cur" || ! is_uint "$mem_cur" || [[ -z "$pids_max" || -z "$mem_max" ]]; then
     log "cgroup files unreadable under $CGROUP_DIR; skipping orca_server_* metrics"
     return 1
@@ -99,6 +100,7 @@ collect_cgroup() {
   pids_ev="$(keyed_value "$CGROUP_DIR/pids.events" max)" || pids_ev=""
   mem_anon="$(keyed_value "$CGROUP_DIR/memory.stat" anon)" || mem_anon=""
   mem_ev_max="$(keyed_value "$CGROUP_DIR/memory.events" max)" || mem_ev_max=""
+  mem_ev_high="$(keyed_value "$CGROUP_DIR/memory.events" high)" || mem_ev_high=""
   mem_ev_oom="$(keyed_value "$CGROUP_DIR/memory.events" oom_kill)" || mem_ev_oom=""
 
   meta orca_server_pids_current gauge "Tasks (threads+processes) in orca-server.service cgroup"
@@ -117,9 +119,17 @@ collect_cgroup() {
   fi
   meta orca_server_memory_max_bytes gauge "MemoryMax of orca-server.service (+Inf when unlimited)"
   emit "orca_server_memory_max_bytes $(limit_value "$mem_max")"
+  if [[ -n "$mem_high" ]]; then
+    meta orca_server_memory_high_bytes gauge "MemoryHigh of orca-server.service (+Inf when unlimited)"
+    emit "orca_server_memory_high_bytes $(limit_value "$mem_high")"
+  fi
   if is_uint "$mem_ev_max"; then
     meta orca_server_memory_events_max_total counter "Times orca-server.service reached MemoryMax (memory.events max)"
     emit "orca_server_memory_events_max_total $mem_ev_max"
+  fi
+  if is_uint "$mem_ev_high"; then
+    meta orca_server_memory_events_high_total counter "Times orca-server.service was throttled at MemoryHigh (memory.events high)"
+    emit "orca_server_memory_events_high_total $mem_ev_high"
   fi
   if is_uint "$mem_ev_oom"; then
     meta orca_server_memory_events_oom_kill_total counter "OOM kills inside orca-server.service (memory.events oom_kill)"

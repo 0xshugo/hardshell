@@ -64,6 +64,11 @@ Alertmanager は `severity` ラベルだけでルーティングする。これ�
 | OrcaServerTasksLimitHit | `increase(orca_server_pids_events_max_total[10m]) > 0` | warning |
 | OrcaServerMemoryNearLimit | anon / MemoryMax > 0.85 10m | warning |
 | OrcaServerOOMKill | `increase(orca_server_memory_events_oom_kill_total[10m]) > 0` | critical |
+| OrcaServerMemoryNearHigh | anon / MemoryHigh > 0.9 10m | warning |
+| OrcaServerMemoryThrottled | `increase(orca_server_memory_events_high_total[10m]) > 0` | warning |
+| OrcaSessionsHigh | `orca_session_reaper_terminals > 12` 30m | warning |
+| OrcaSessionReaperCloseFailures | `orca_session_reaper_close_failures > 0` | warning |
+| OrcaSessionReaperStale | 最終実行から 1 時間超、またはメトリクス欠落 5m | warning |
 | HostRootDiskHigh | / 使用率 > 0.85 10m（warning）、> 0.92 5m（critical） | warning / critical |
 | HostMemoryAvailableLow | MemAvailable / MemTotal < 0.10 10m | warning |
 | SystemdUnitInactive | `systemd_unit_active == 0` 5m（service は critical、timer は warning） | critical / warning |
@@ -171,6 +176,38 @@ anon メモリが MemoryMax の 85% を超えている。page cache は回収可
 
 `memory.events` の `oom_kill` が増えた。サービス内のプロセスがカーネルに kill された。
 `journalctl -k | grep -i oom` と MemoryMax を確認する。
+
+### OrcaServerMemoryNearHigh
+
+anon メモリが MemoryHigh（drop-in `40-memoryhigh.conf`、5G）の 90% を超えた。超えるとカーネルがサービス内で
+スロットリング・回収を始める。主因は開きっぱなしの Orca ターミナル。reaper の動作を確認し、不要なセッションを閉じる。
+
+### OrcaServerMemoryThrottled
+
+`memory.events` の `high` が増えた。MemoryHigh でスロットリングされている。MemoryMax（6G）で OOM kill される前に
+アイドルなターミナルを閉じる。
+
+### OrcaSessionsHigh
+
+reaper 実行後も 12 を超えるターミナルが 30 分残っている。保護対象（`security-check-vps`、`aoi-broadcasting`）が多いか、
+close が失敗している。
+
+```bash
+sudo journalctl -u orca-session-reaper.service -n 50
+```
+
+### OrcaSessionReaperCloseFailures
+
+直近の reaper 実行で close に失敗したターミナルがある。上記ログと orca-server.service の状態を確認する。
+
+### OrcaSessionReaperStale
+
+reaper（`orca-session-reaper.timer`、15 分毎）が 1 時間以上 Pushgateway に push していない。古いセッションが閉じられず
+メモリが増え続ける。
+
+```bash
+systemctl status orca-session-reaper.timer orca-session-reaper.service
+```
 
 ### HostRootDiskHigh
 

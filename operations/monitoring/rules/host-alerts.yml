@@ -97,6 +97,66 @@ groups:
             itself was killed. Check `journalctl -k | grep -i oom` and MemoryMax.
             Runbook: docs/ops/monitoring.md#orcaserveroomkill
 
+      - alert: OrcaServerMemoryNearHigh
+        expr: orca_server_memory_anon_bytes / orca_server_memory_high_bytes > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service anonymous memory is above 90% of MemoryHigh
+          description: >-
+            Above MemoryHigh the kernel throttles and reclaims inside the service, which
+            slows every agent. Usually too many open Orca terminals: check the session
+            reaper and close idle sessions. Runbook: docs/ops/monitoring.md#orcaservermemorynearhigh
+
+      - alert: OrcaServerMemoryThrottled
+        expr: increase(orca_server_memory_events_high_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: orca-server.service exceeded MemoryHigh in the last 10 minutes
+          description: >-
+            memory.events high increased: the service was throttled at MemoryHigh. Close
+            idle Orca terminals before it reaches MemoryMax and OOM-kills.
+            Runbook: docs/ops/monitoring.md#orcaservermemorythrottled
+
+      - alert: OrcaSessionsHigh
+        expr: orca_session_reaper_terminals > 12
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: more than 12 Orca terminals stayed open after reaping
+          description: >-
+            The session reaper could not bring open terminals down to its limit (protected
+            terminals or close failures). Check `journalctl -u orca-session-reaper.service -n 50`.
+            Runbook: docs/ops/monitoring.md#orcasessionshigh
+
+      - alert: OrcaSessionReaperCloseFailures
+        expr: orca_session_reaper_close_failures > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: the Orca session reaper failed to close terminals
+          description: >-
+            The last reaper run could not close one or more terminals. Check
+            `journalctl -u orca-session-reaper.service -n 50` and orca-server.service health.
+            Runbook: docs/ops/monitoring.md#orcasessionreaperclosefailures
+
+      - alert: OrcaSessionReaperStale
+        expr: >-
+          time() - orca_session_reaper_last_run_timestamp_seconds{job="orca_session_reaper"} > 3600
+          or absent(orca_session_reaper_last_run_timestamp_seconds{job="orca_session_reaper"})
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: the Orca session reaper has not pushed for more than an hour
+          description: >-
+            Stale terminals are no longer being closed, so orca-server.service memory can grow
+            to MemoryMax. Check `systemctl status orca-session-reaper.timer orca-session-reaper.service`.
+            Runbook: docs/ops/monitoring.md#orcasessionreaperstale
+
       # --- host -----------------------------------------------------------------------------
       - alert: HostRootDiskHigh
         expr: (host_rootfs_used_ratio > 0.85) <= 0.92

@@ -29,6 +29,17 @@ COLLECTOR = MON / "host-health-push.sh"
 MERGE = MON / "merge-alert-groups.py"
 APPLY = MON / "apply-monitoring.sh"
 DOC = ROOT / "docs" / "ops" / "monitoring.md"
+# Pushed by orca-session-reaper (orca-fleet bin/orca_session_reaper.py), job=orca_session_reaper.
+REAPER_PREFIX = "orca_session_reaper_"
+REAPER_METRICS = {
+    "orca_session_reaper_terminals_before",
+    "orca_session_reaper_terminals",
+    "orca_session_reaper_close_failures",
+    "orca_session_reaper_oldest_age_seconds",
+    "orca_session_reaper_max_terminals",
+    "orca_session_reaper_last_run_timestamp_seconds",
+    "orca_session_reaper_closed",
+}
 
 PROMQL_WORDS = {
     "absent", "and", "bool", "by", "increase", "offset", "or", "rate", "time", "unless",
@@ -171,6 +182,7 @@ def fixture_env(tmp_path: Path) -> dict[str, str]:
     _write(cg / "pids.events", "max 1070\n")
     _write(cg / "memory.current", "4000000000\n")
     _write(cg / "memory.max", "max\n")
+    _write(cg / "memory.high", "5368709120\n")
     _write(cg / "memory.events", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 1\n")
     _write(cg / "memory.stat", "anon 2500000000\nfile 1400000000\n")
     proc = tmp_path / "proc"
@@ -240,6 +252,8 @@ def test_collector_print_produces_expected_metrics(fixture_env: dict[str, str]) 
     assert s["orca_server_memory_anon_bytes"] == 2_500_000_000
     assert s["orca_server_memory_max_bytes"] == float("inf")
     assert s["orca_server_memory_events_max_total"] == 3
+    assert s["orca_server_memory_high_bytes"] == 5368709120
+    assert s["orca_server_memory_events_high_total"] == 0
     assert s["orca_server_memory_events_oom_kill_total"] == 1
     assert s["host_health_orca_server_cgroup_readable"] == 1
     assert s["host_memory_available_ratio"] == pytest.approx(0.25)
@@ -289,7 +303,18 @@ def test_host_rule_metrics_are_emitted_by_collector(fixture_env: dict[str, str])
     used: set[str] = set()
     for rule in _alerts(HOST_RULES):
         used |= _metric_names(rule["expr"])
+    # orca_session_reaper_* is pushed by orca-session-reaper (orca-fleet), not this collector.
+    used = {m for m in used if not m.startswith(REAPER_PREFIX)}
     assert used <= emitted, f"not emitted by host-health-push.sh: {sorted(used - emitted)}"
+
+
+def test_reaper_rule_metrics_use_reaper_job_prefix() -> None:
+    names: set[str] = set()
+    for rule in _alerts(HOST_RULES):
+        names |= _metric_names(rule["expr"])
+    reaper = {m for m in names if m.startswith(REAPER_PREFIX)}
+    assert reaper, "expected orca_session_reaper_* rules in host-alerts.yml"
+    assert reaper <= REAPER_METRICS, f"unknown reaper metrics: {sorted(reaper - REAPER_METRICS)}"
 
 
 def test_collector_never_runs_docker_and_unit_is_unprivileged() -> None:
